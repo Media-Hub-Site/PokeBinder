@@ -1,6 +1,4 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
-from sqlalchemy import func
 from models import Carta, UsuarioCarta
 
 def filtro_cartas_sqlalchemy(

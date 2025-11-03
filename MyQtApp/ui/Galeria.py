@@ -6,13 +6,13 @@ from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl
 from PyQt6.QtMultimedia import QSoundEffect
 import os
-from MyQtApp.app.getImgs import get_pixmap_from_zip
 
-from Database import db  # Conexión a tu base de datos
+from MyQtApp.app.getImgs import get_pixmap_from_zip
+from ..session import SessionLocal
+from ..models import Carta  # tu modelo SQLAlchemy
 
 
 class ClickableLabel(QLabel):
-    # usar object para permitir int o str y evitar coerciones que rompen la búsqueda
     clicked = pyqtSignal(object)
 
     def __init__(self, id_carta, *args, **kwargs):
@@ -30,6 +30,8 @@ class GaleriaCartas(QWidget):
     def __init__(self, path_imagenes):
         super().__init__()
         self.path_imagenes = path_imagenes
+        self.session = SessionLocal()
+
         self.labels_por_id = {}
         self.cartas_seleccionadas = set()
         self.current_page = 0
@@ -37,7 +39,7 @@ class GaleriaCartas(QWidget):
 
         self.main_layout = QVBoxLayout(self)
 
-        # Filtros
+        # Filtros UI
         header_layout = QHBoxLayout()
         self.buscador = QLineEdit()
         self.buscador.setPlaceholderText("🔍 Buscar carta por nombre...")
@@ -49,12 +51,12 @@ class GaleriaCartas(QWidget):
 
         self.filtros = {}
         campos = {
-            "rareza": "rarity",
-            "tipo": "type",
-            "edición": "edition",
-            "etapa": "stage",
-            "entrenador": "trainer",
-            "especial": "especial_type"
+            "rareza": Carta.rarity,
+            "tipo": Carta.type,
+            "edición": Carta.edition,
+            "etapa": Carta.stage,
+            "entrenador": Carta.trainer,
+            "especial": Carta.especial_type
         }
 
         for etiqueta, columna in campos.items():
@@ -68,7 +70,7 @@ class GaleriaCartas(QWidget):
         header_layout.addStretch()
         self.main_layout.addLayout(header_layout)
 
-        # Área de scroll
+        # Scroll
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFixedHeight(460)
@@ -78,7 +80,7 @@ class GaleriaCartas(QWidget):
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
 
-        # Transición
+        # Animación
         self.opacity_effect = QGraphicsOpacityEffect()
         self.container.setGraphicsEffect(self.opacity_effect)
         self.animacion = QPropertyAnimation(self.opacity_effect, b"opacity")
@@ -99,53 +101,32 @@ class GaleriaCartas(QWidget):
         paginacion_layout.addWidget(self.btn_siguiente)
         self.main_layout.addLayout(paginacion_layout)
 
-        self.setLayout(self.main_layout)
-
-        # Estilo pastel rosado
-        estilo_pastel = """
+        # Estilo pastel
+        self.setStyleSheet("""
             QLineEdit {
                 padding: 6px;
                 border: 2px solid #e7a7c7;
                 border-radius: 10px;
                 background-color: #ffeaf4;
-                color: #5a3e47;
-                font-size: 14px;
             }
             QComboBox {
                 padding: 4px 8px;
                 border: 2px solid #e7a7c7;
                 border-radius: 10px;
                 background-color: #ffeaf4;
-                color: #5a3e47;
-                font-size: 13px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #fff0f6;
-                selection-background-color: #f6c1d4;
-                color: #5a3e47;
-                border: 1px solid #e7a7c7;
-                border-radius: 5px;
             }
             QPushButton {
                 padding: 6px 12px;
                 border: 2px solid #e7a7c7;
                 border-radius: 8px;
                 background-color: #ffd6e8;
-                color: #5a3e47;
                 font-weight: bold;
             }
-            QPushButton:hover {
-                background-color: #fcd0e4;
-            }
-            QPushButton:pressed {
-                background-color: #fbb8d1;
-            }
-        """
-        self.setStyleSheet(estilo_pastel)
+        """)
 
-        # Cargar sonido para cambio de página
+        # Sonido
         self.sonido_pagina = QSoundEffect()
-        self.sonido_pagina.setSource(QUrl.fromLocalFile("assets/sounds/paginas.wav"))  # Ajusta la ruta si es necesario
+        self.sonido_pagina.setSource(QUrl.fromLocalFile("assets/sounds/paginas.wav"))
         self.sonido_pagina.setVolume(0.5)
 
         self.cargar_filtros()
@@ -153,11 +134,9 @@ class GaleriaCartas(QWidget):
         self.actualizar_galeria()
 
     def cargar_filtros(self):
-        cursor = db.conn.cursor()
         for columna, combo in self.filtros.items():
-            cursor.execute(f"SELECT DISTINCT {columna} FROM Cartas WHERE {columna} IS NOT NULL")
-            valores = sorted([fila[0] for fila in cursor.fetchall() if fila[0]])
-            for val in valores:
+            valores = self.session.query(columna).filter(columna != None).distinct().all()
+            for (val,) in valores:
                 combo.addItem(val)
 
     def on_text_changed(self):
@@ -169,115 +148,86 @@ class GaleriaCartas(QWidget):
         self.actualizar_con_transicion()
 
     def actualizar_total_cartas(self):
-        cursor = db.conn.cursor()
-        query = "SELECT COUNT(*) FROM Cartas WHERE 1=1"
-        params = []
+        query = self.session.query(Carta)
 
-        texto_busqueda = self.buscador.text().strip().lower()
-        if texto_busqueda:
-            query += " AND LOWER(nombre) LIKE ?"
-            params.append(f"%{texto_busqueda}%")
+        if text := self.buscador.text().strip().lower():
+            query = query.filter(Carta.nombre.ilike(f"%{text}%"))
 
-        for columna, combo in self.filtros.items():
-            valor = combo.currentText()
-            if valor != "Todos":
-                query += f" AND {columna} = ?"
-                params.append(valor)
+        for col, combo in self.filtros.items():
+            if combo.currentText() != "Todos":
+                query = query.filter(col == combo.currentText())
 
-        cursor.execute(query, params)
-        self.total_cartas = cursor.fetchone()[0]
+        self.total_cartas = query.count()
 
     def actualizar_con_transicion(self):
-        # Animación de salida (fade out)
-        self.animacion.setStartValue(1.0)
-        self.animacion.setEndValue(0.0)
+        self.animacion.setStartValue(1)
+        self.animacion.setEndValue(0)
         self.animacion.finished.connect(self._actualizar_y_fade_in)
         self.animacion.start()
 
     def _actualizar_y_fade_in(self):
         self.actualizar_galeria()
-        # Animación de entrada (fade in)
         self.animacion.finished.disconnect()
-        self.animacion.setStartValue(0.0)
-        self.animacion.setEndValue(1.0)
+        self.animacion.setStartValue(0)
+        self.animacion.setEndValue(1)
         self.animacion.start()
 
     def actualizar_galeria(self):
-        texto_busqueda = self.buscador.text().strip().lower()
-
         for i in reversed(range(self.grid.count())):
-            widget = self.grid.itemAt(i).widget()
-            if widget:
-                widget.deleteLater()
+            w = self.grid.itemAt(i).widget()
+            if w: w.deleteLater()
 
         self.labels_por_id.clear()
 
-        cursor = db.conn.cursor()
-        query = "SELECT nombre, id_api FROM Cartas WHERE 1=1"
-        params = []
+        query = self.session.query(Carta)
 
-        if texto_busqueda:
-            query += " AND LOWER(nombre) LIKE ?"
-            params.append(f"%{texto_busqueda}%")
+        if text := self.buscador.text().strip().lower():
+            query = query.filter(Carta.nombre.ilike(f"%{text}%"))
 
-        for columna, combo in self.filtros.items():
-            valor = combo.currentText()
-            if valor != "Todos":
-                query += f" AND {columna} = ?"
-                params.append(valor)
+        for col, combo in self.filtros.items():
+            if combo.currentText() != "Todos":
+                query = query.filter(col == combo.currentText())
 
-        query += " LIMIT ? OFFSET ?"
-        params.extend([self.CARTAS_POR_PAGINA, self.current_page * self.CARTAS_POR_PAGINA])
-
-        cursor.execute(query, params)
-        cartas = cursor.fetchall()
+        cartas = query.limit(self.CARTAS_POR_PAGINA)\
+                      .offset(self.current_page * self.CARTAS_POR_PAGINA)\
+                      .all()
 
         row, col = 0, 0
-        for nombre, id_api in cartas:
-            base = nombre.lower().replace(' ', '_')
-            posibles_nombres = [
-                f"{base}.webp",
-                f"{base}.png",
-                f"{base}.jpg",
-                f"{base}_{id_api}.webp",
-                f"{base}_{id_api}.png",
-                f"{base}_{id_api}.jpg",
+        for carta in cartas:
+            pix = None
+            posibles = [
+                f"{carta.nombre.lower().replace(' ','_')}.webp",
+                f"{carta.nombre.lower().replace(' ','_')}.png",
+                f"{carta.nombre.lower().replace(' ','_')}.jpg",
             ]
-            imagen_path = None
-            pixmap = None
-            for archivo in posibles_nombres:
-                # First try to load from zip
-                pix = get_pixmap_from_zip(archivo, size=(120, 170))
-                if pix:
-                    pixmap = pix
-                    break
-                # Fallback to filesystem
-                ruta = os.path.join(self.path_imagenes, archivo)
+
+            for file in posibles:
+                pix = get_pixmap_from_zip(file, size=(120, 170))
+                if pix: break
+                ruta = os.path.join(self.path_imagenes, file)
                 if os.path.exists(ruta):
-                    pixmap = QPixmap(ruta).scaled(120, 170, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    pix = QPixmap(ruta).scaled(120, 170, Qt.KeepAspectRatio)
                     break
-            if not pixmap:
+
+            if not pix:
                 continue
-            label = ClickableLabel(id_api)
-            label.setPixmap(pixmap)
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            if id_api in self.cartas_seleccionadas:
-                label.setStyleSheet("padding: 5px; border: 2px solid #00cccc; background-color: rgba(0, 255, 200, 80);")
+            lbl = ClickableLabel(carta.id_api)
+            lbl.setPixmap(pix)
+            lbl.clicked.connect(self.seleccionar_carta)
+
+            if carta.id_api in self.cartas_seleccionadas:
+                lbl.setStyleSheet("padding:5px;border:2px solid #00cccc;background:rgba(0,255,200,80);")
             else:
-                label.setStyleSheet("padding: 5px; border: 2px solid transparent;")
+                lbl.setStyleSheet("padding:5px;border:2px solid transparent;")
 
-            label.clicked.connect(self.seleccionar_carta)
-            self.labels_por_id[id_api] = label
-
-            self.grid.addWidget(label, row, col)
+            self.labels_por_id[carta.id_api] = lbl
+            self.grid.addWidget(lbl, row, col)
             col += 1
-            if col == 5:
-                col = 0
-                row += 1
+            if col == 5: row, col = row + 1, 0
 
         total_paginas = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
-        self.lbl_pagina.setText(f"Página {self.current_page + 1} de {total_paginas}")
+        self.lbl_pagina.setText(f"Página {self.current_page+1} de {total_paginas}")
         self.btn_anterior.setEnabled(self.current_page > 0)
         self.btn_siguiente.setEnabled(self.current_page < total_paginas - 1)
 
@@ -285,50 +235,31 @@ class GaleriaCartas(QWidget):
         if self.current_page > 0:
             self.current_page -= 1
             self.actualizar_con_transicion()
-            self.sonido_pagina.play()  # Reproduce sonido al cambiar página
+            self.sonido_pagina.play()
 
     def pagina_siguiente(self):
         total_paginas = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
         if self.current_page < total_paginas - 1:
             self.current_page += 1
             self.actualizar_con_transicion()
-            self.sonido_pagina.play()  # Reproduce sonido al cambiar página
+            self.sonido_pagina.play()
 
     def seleccionar_carta(self, id_carta):
-        label = self.labels_por_id.get(id_carta)
-        if not label:
-            return
+        lbl = self.labels_por_id.get(id_carta)
+        if not lbl: return
 
         if id_carta in self.cartas_seleccionadas:
             self.cartas_seleccionadas.remove(id_carta)
-            label.setStyleSheet("padding: 5px; border: 2px solid transparent; background-color: transparent;")
+            lbl.setStyleSheet("padding:5px;border:2px solid transparent;")
         else:
             self.cartas_seleccionadas.add(id_carta)
-            label.setStyleSheet("padding: 5px; border: 2px solid #00cccc; background-color: rgba(0, 255, 200, 80);")
+            lbl.setStyleSheet("padding:5px;border:2px solid #00cccc;background:rgba(0,255,200,80);")
 
     def get_cartas_seleccionadas(self):
-        """
-        Devuelve la lista de cartas seleccionadas en formato de diccionarios:
-        [{"id_api": <id_api>, "nombre": <nombre>}, ...]
-
-        Esto facilita que el código que consume esta función (por ejemplo
-        `MainWindow.agregar_cartas`) pueda insertar `nombre` junto al id.
-        """
         if not self.cartas_seleccionadas:
             return []
 
-        # Obtener los nombres desde la base de datos para cada id_api seleccionado
-        cursor = db.conn.cursor()
-        placeholders = ",".join(["?" for _ in self.cartas_seleccionadas])
-        query = f"SELECT id_api, nombre FROM Cartas WHERE id_api IN ({placeholders})"
-        cursor.execute(query, tuple(self.cartas_seleccionadas))
-        rows = cursor.fetchall()
+        cartas = self.session.query(Carta.id_api, Carta.nombre)\
+            .filter(Carta.id_api.in_(self.cartas_seleccionadas)).all()
 
-        id_to_nombre = {row[0]: row[1] for row in rows}
-
-        result = []
-        for id_api in self.cartas_seleccionadas:
-            nombre = id_to_nombre.get(id_api, "")
-            result.append({"id_api": id_api, "nombre": nombre})
-
-        return result
+        return [{"id_api": c[0], "nombre": c[1]} for c in cartas]

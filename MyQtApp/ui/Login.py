@@ -5,14 +5,20 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 import os
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from Database import db  # tu módulo con la conexión a la base
+
+from session import SessionLocal
+from models import Usuario
+
 
 class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Inicio de Sesión")
         self.setGeometry(600, 300, 350, 180)
+
+        self.session = SessionLocal()
 
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
@@ -68,14 +74,16 @@ class LoginWindow(QWidget):
 
         self.setLayout(layout)
 
-        # Estilo para el fondo de la ventana y bordes redondeados
         self.setStyleSheet("""
             QWidget {
                 background-color: #ffeef2;
                 border-radius: 20px;
             }
         """)
-        self.usuario_logueado = None  # Aquí guardaremos el usuario válido
+
+        self.usuario_logueado = None
+
+
     def mostrar_mensaje(self, titulo, mensaje, tipo="info"):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle(titulo)
@@ -90,12 +98,10 @@ class LoginWindow(QWidget):
 
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-        # Estética pastel personalizada
         msg_box.setStyleSheet("""
             QMessageBox {
                 background-color: #ffeef2;
                 border-radius: 15px;
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                 font-size: 14px;
                 color: #5a2a3a;
             }
@@ -121,31 +127,32 @@ class LoginWindow(QWidget):
 
         msg_box.exec()
 
+
     def handle_login(self):
         username = self.input_username.text().strip()
+
         if not username:
             self.mostrar_mensaje("Error", "Debes ingresar un nombre de usuario.", tipo="warning")
             return
 
-        cursor = db.conn.execute("SELECT nombre FROM Usuarios WHERE LOWER(nombre) = LOWER(?)", (username,))
-        row = cursor.fetchone()
+        user = self.session.query(Usuario).filter(Usuario.nombre.ilike(username)).first()
 
-        if row:
+        if user:
             self.mostrar_mensaje("Bienvenido", f"Bienvenido de nuevo, {username}!", tipo="info")
         else:
             try:
-                db.conn.execute("INSERT INTO Usuarios (nombre) VALUES (?)", (username,))
-                db.conn.commit()
+                nuevo = Usuario(nombre=username)
+                self.session.add(nuevo)
+                self.session.commit()
                 self.mostrar_mensaje("Usuario creado", f"Usuario '{username}' creado correctamente.", tipo="info")
             except Exception as e:
+                self.session.rollback()
                 self.mostrar_mensaje("Error", f"No se pudo crear usuario: {e}", tipo="error")
                 return
 
         self.usuario_logueado = username
         self.close()
 
+
     def get_usuario(self):
         return self.usuario_logueado
-
-
-
