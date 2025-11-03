@@ -1,10 +1,9 @@
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import relationship
+from .session import engine, Base
 
-Base = declarative_base()
 
-
-class Usuario(Base):
+class Usuarios(Base):
     __tablename__ = "Usuarios"
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
@@ -13,7 +12,7 @@ class Usuario(Base):
     cartas = relationship("UsuarioCarta", back_populates="usuario", cascade="all, delete")
 
 
-class Carta(Base):
+class Cartas(Base):
     __tablename__ = "Cartas"
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
@@ -39,8 +38,9 @@ class UsuarioCarta(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     usuario_nombre = Column(String, ForeignKey("Usuarios.nombre", ondelete="CASCADE"), nullable=False)
     carta_id = Column(String, ForeignKey("Cartas.id_api", ondelete="CASCADE"), nullable=False)
-    nombre_pokemon = Column(String, ForeignKey("Cartas.nombre", ondelete="CASCADE"), nullable=False)
+    # nombre_pokemon = Column(String)  # solo info adicional
 
-    usuario = relationship("Usuario", back_populates="cartas")
-    carta = relationship("Carta", back_populates="usuarios")
+    usuario = relationship("Usuarios", back_populates="cartas", foreign_keys=[usuario_nombre])
+    carta = relationship("Cartas", back_populates="usuarios", foreign_keys=[carta_id])
 
+Base.metadata.create_all(bind=engine)

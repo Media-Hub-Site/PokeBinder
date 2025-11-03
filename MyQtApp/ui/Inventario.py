@@ -7,9 +7,9 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl
 from PyQt6.QtMultimedia import QSoundEffect
 import os
 
-from MyQtApp.session import SessionLocal
-from ..models import Carta, UsuarioCarta
-from MyQtApp.app.getImgs import get_pixmap_from_zip
+from ..session import SessionLocal
+from ..models import Cartas, UsuarioCarta
+from ..app.getImgs import get_pixmap_from_zip
 from sqlalchemy import func, and_
 
 
@@ -117,8 +117,8 @@ class GaleriaCartasInventario(QWidget):
     def cargar_filtros(self):
         for columna, combo in self.filtros.items():
             valores = (
-                self.session.query(getattr(Carta, columna))
-                .filter(getattr(Carta, columna).isnot(None))
+                self.session.query(getattr(Cartas, columna))
+                .filter(getattr(Cartas, columna).isnot(None))
                 .distinct()
                 .all()
             )
@@ -136,17 +136,17 @@ class GaleriaCartasInventario(QWidget):
 
     # ✅ SQLAlchemy conteo
     def actualizar_total_cartas(self):
-        q = self.session.query(func.count(Carta.id_api)).join(UsuarioCarta).filter(
+        q = self.session.query(func.count(Cartas.id_api)).join(UsuarioCarta).filter(
             UsuarioCarta.usuario_nombre == self.nombre_usuario
         )
 
         texto = self.buscador.text().lower().strip()
         if texto:
-            q = q.filter(func.lower(Carta.nombre).like(f"%{texto}%"))
+            q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
 
         for columna, combo in self.filtros.items():
             if combo.currentText() != "Todos":
-                q = q.filter(getattr(Carta, columna) == combo.currentText())
+                q = q.filter(getattr(Cartas, columna) == combo.currentText())
 
         self.total_cartas = q.scalar()
 
@@ -171,16 +171,16 @@ class GaleriaCartasInventario(QWidget):
 
         texto = self.buscador.text().lower().strip()
 
-        q = self.session.query(Carta.nombre, Carta.id_api).join(UsuarioCarta).filter(
+        q = self.session.query(Cartas.nombre, Cartas.id_api).join(UsuarioCarta).filter(
             UsuarioCarta.usuario_nombre == self.nombre_usuario
         )
 
         if texto:
-            q = q.filter(func.lower(Carta.nombre).like(f"%{texto}%"))
+            q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
 
         for columna, combo in self.filtros.items():
             if combo.currentText() != "Todos":
-                q = q.filter(getattr(Carta, columna) == combo.currentText())
+                q = q.filter(getattr(Cartas, columna) == combo.currentText())
 
         q = q.limit(self.CARTAS_POR_PAGINA).offset(self.current_page * self.CARTAS_POR_PAGINA)
         cartas = q.all()
@@ -262,8 +262,8 @@ class GaleriaCartasInventario(QWidget):
             return []
 
         filas = (
-            self.session.query(Carta.id_api, Carta.nombre)
-            .filter(Carta.id_api.in_(self.cartas_seleccionadas))
+            self.session.query(Cartas.id_api, Cartas.nombre)
+            .filter(Cartas.id_api.in_(self.cartas_seleccionadas))
             .all()
         )
 

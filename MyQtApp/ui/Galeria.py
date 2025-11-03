@@ -9,7 +9,7 @@ import os
 
 from MyQtApp.app.getImgs import get_pixmap_from_zip
 from ..session import SessionLocal
-from ..models import Carta  # tu modelo SQLAlchemy
+from ..models import Cartas  # tu modelo SQLAlchemy
 
 
 class ClickableLabel(QLabel):
@@ -51,12 +51,12 @@ class GaleriaCartas(QWidget):
 
         self.filtros = {}
         campos = {
-            "rareza": Carta.rarity,
-            "tipo": Carta.type,
-            "edición": Carta.edition,
-            "etapa": Carta.stage,
-            "entrenador": Carta.trainer,
-            "especial": Carta.especial_type
+            "rareza": Cartas.rarity,
+            "tipo": Cartas.type,
+            "edición": Cartas.edition,
+            "etapa": Cartas.stage,
+            "entrenador": Cartas.trainer,
+            "especial": Cartas.especial_type
         }
 
         for etiqueta, columna in campos.items():
@@ -148,10 +148,10 @@ class GaleriaCartas(QWidget):
         self.actualizar_con_transicion()
 
     def actualizar_total_cartas(self):
-        query = self.session.query(Carta)
+        query = self.session.query(Cartas)
 
         if text := self.buscador.text().strip().lower():
-            query = query.filter(Carta.nombre.ilike(f"%{text}%"))
+            query = query.filter(Cartas.nombre.ilike(f"%{text}%"))
 
         for col, combo in self.filtros.items():
             if combo.currentText() != "Todos":
@@ -179,10 +179,10 @@ class GaleriaCartas(QWidget):
 
         self.labels_por_id.clear()
 
-        query = self.session.query(Carta)
+        query = self.session.query(Cartas)
 
         if text := self.buscador.text().strip().lower():
-            query = query.filter(Carta.nombre.ilike(f"%{text}%"))
+            query = query.filter(Cartas.nombre.ilike(f"%{text}%"))
 
         for col, combo in self.filtros.items():
             if combo.currentText() != "Todos":
@@ -259,7 +259,7 @@ class GaleriaCartas(QWidget):
         if not self.cartas_seleccionadas:
             return []
 
-        cartas = self.session.query(Carta.id_api, Carta.nombre)\
-            .filter(Carta.id_api.in_(self.cartas_seleccionadas)).all()
+        cartas = self.session.query(Cartas.id_api, Cartas.nombre)\
+            .filter(Cartas.id_api.in_(self.cartas_seleccionadas)).all()
 
         return [{"id_api": c[0], "nombre": c[1]} for c in cartas]

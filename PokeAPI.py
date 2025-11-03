@@ -1,7 +1,7 @@
 import requests
 import time
 from MyQtApp.session import SessionLocal
-from MyQtApp.models import Carta
+from MyQtApp.models import Cartas
 
 session = SessionLocal()
 
@@ -44,11 +44,11 @@ while True:
 
         try:
             # Verificar si ya existe
-            existe = session.query(Carta).filter_by(id_api=id_api).first()
+            existe = session.query(Cartas).filter_by(id_api=id_api).first()
             if existe:
                 continue
 
-            nueva_carta = Carta(
+            nueva_carta = Cartas(
                 id_api = id_api, nombre=nombre, type=tipo, price=precio,
                 rarity = rareza, number=numero, set_id=set_id,
                 set_name = set_nombre, stage=stage, especial_type=especial_type,

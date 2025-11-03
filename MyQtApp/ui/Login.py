@@ -1,15 +1,12 @@
-import sys
+
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel,
     QLineEdit, QPushButton, QMessageBox
 )
 from PyQt6.QtCore import Qt
-import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from session import SessionLocal
-from models import Usuario
+from ..session import SessionLocal
+from ..models import Usuarios
 
 
 class LoginWindow(QWidget):
@@ -135,13 +132,13 @@ class LoginWindow(QWidget):
             self.mostrar_mensaje("Error", "Debes ingresar un nombre de usuario.", tipo="warning")
             return
 
-        user = self.session.query(Usuario).filter(Usuario.nombre.ilike(username)).first()
+        user = self.session.query(Usuarios).filter(Usuarios.nombre.ilike(username)).first()
 
         if user:
             self.mostrar_mensaje("Bienvenido", f"Bienvenido de nuevo, {username}!", tipo="info")
         else:
             try:
-                nuevo = Usuario(nombre=username)
+                nuevo = Usuarios(nombre=username)
                 self.session.add(nuevo)
                 self.session.commit()
                 self.mostrar_mensaje("Usuario creado", f"Usuario '{username}' creado correctamente.", tipo="info")

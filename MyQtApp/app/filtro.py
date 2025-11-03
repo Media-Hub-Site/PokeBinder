@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models import Carta, UsuarioCarta
+from models import Cartas, UsuarioCarta
 
 def filtro_cartas_sqlalchemy(
         session: Session,
@@ -29,15 +29,15 @@ def filtro_cartas_sqlalchemy(
 
     # Query base con JOIN a la tabla intermedia
     query = (
-        session.query(Carta)
-        .join(UsuarioCarta, Carta.id_api == UsuarioCarta.carta_id)
+        session.query(Cartas)
+        .join(UsuarioCarta, Cartas.id_api == UsuarioCarta.carta_id)
         .filter(UsuarioCarta.usuario_nombre == user)
     )
 
     # Construcción de filtros dinámicos
     for campo, valor in filtros.items():
         if valor not in (None, "", []):
-            columna = getattr(Carta, campo)
+            columna = getattr(Cartas, campo)
             if campo in campos_like:
                 query = query.filter(columna.ilike(f"%{valor}%"))
             else:
