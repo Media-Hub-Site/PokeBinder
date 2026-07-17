@@ -1,55 +1,39 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QComboBox, QSpinBox, QSizePolicy, QFrame, QGridLayout
+    QSlider, QComboBox, QSpinBox, QSizePolicy, QFrame, QGridLayout, QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-
-
-class _CircleIndicator(QLabel):
-    def __init__(self, filled=False, size=22, parent=None):
-        super().__init__(parent)
-        self.filled = filled
-        self.size = size
-        self.setFixedSize(size, size)
-        self.update_style()
-
-    def update_style(self):
-        bg = '#f7a8b8' if self.filled else '#ffffff'
-        border = '#f29ca4' if self.filled else '#e8c7ce'
-        self.setStyleSheet(f"background:{bg}; border:2px solid {border}; border-radius:{self.size//2}px;")
+import os
+from MyQtApp.config import STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings, DEFAULT_SETTINGS
 
 
 class AjustesWidget(QWidget):
-    """Pantalla de ajustes (UI únicamente) reproduciendo el mockup de Canva."""
+    """Pantalla de ajustes (UI, lógica de temas, y señales de cambio de estado)."""
+
+    music_volume_changed = pyqtSignal(int)
+    sound_volume_changed = pyqtSignal(int)
+    music_track_changed = pyqtSignal(int)
+    animations_toggled = pyqtSignal(bool)
+    theme_toggled = pyqtSignal(bool)
+    card_size_changed = pyqtSignal(str)
+    logout_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Estilo general de la tarjeta interior
-        self.setStyleSheet("""
-            QWidget#ajustes_root { background-color: #c87d86; border-radius: 14px; }
-            QLabel.header { color: #fff7f8; font-weight: 700; font-size: 18px; }
-            QLabel.label_pill { background: #ffffff; color: #d66b78; border-radius: 18px; padding: 8px 16px; }
-            QPushButton.pill { background: #fff7f8; color: #d66b78; border: 2px solid #f7a8b8; border-radius: 18px; padding: 6px 14px; }
-            QPushButton.pill:pressed { background:#ffdfe6 }
-            QPushButton.pill.selected { background: #bff6c7; color: #24603a; border:2px solid #86d99c }
-        """)
-
         self.setObjectName('ajustes_root')
+        self.settings = load_settings()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(14)
 
-        # --- Top (no title, only the content as in the mockup) ---
+        # --- Top ---
         top_rows = QVBoxLayout()
         top_rows.setSpacing(12)
 
-        # Row helper
-        def make_audio_row(text, filled_count=5):
+        def make_audio_row(text, initial_value, callback):
             row = QHBoxLayout()
-            # pill label (rounded white)
             lbl = QLabel(text)
             lbl.setProperty('class', 'label_pill')
             lbl.setFont(QFont('Segoe UI', 11))
@@ -57,24 +41,25 @@ class AjustesWidget(QWidget):
             lbl.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             row.addWidget(lbl)
 
-            # speaker icon
             sp = QLabel("🔊")
             sp.setFixedWidth(28)
             sp.setAlignment(Qt.AlignmentFlag.AlignCenter)
             row.addWidget(sp)
 
-            # indicators (10 circles)
-            ind_row = QHBoxLayout()
-            ind_row.setSpacing(6)
-            for i in range(10):
-                c = _CircleIndicator(filled=(i < filled_count), size=18)
-                ind_row.addWidget(c)
-            row.addLayout(ind_row)
-            row.addStretch()
-            return row
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setValue(initial_value)
+            slider.setFixedHeight(28)
+            slider.valueChanged.connect(callback)
+            row.addWidget(slider)
+            
+            return row, slider
 
-        top_rows.addLayout(make_audio_row('Música', filled_count=6))
-        top_rows.addLayout(make_audio_row('Sonido', filled_count=5))
+        row_musica, self.slider_musica = make_audio_row('Música', self.settings["volumen_musica"], self.on_music_volume)
+        row_sonido, self.slider_sonido = make_audio_row('Sonido', self.settings["volumen_sonido"], self.on_sound_volume)
+
+        top_rows.addLayout(row_musica)
+        top_rows.addLayout(row_sonido)
 
         root.addLayout(top_rows)
 
@@ -94,100 +79,215 @@ class AjustesWidget(QWidget):
 
         self.font_slider = QSlider(Qt.Orientation.Horizontal)
         self.font_slider.setRange(8, 30)
-        self.font_slider.setValue(14)
+        self.font_slider.setValue(self.settings["tamano_fuente"])
         self.font_slider.setFixedHeight(28)
-        self.font_slider.setStyleSheet("QSlider::groove:horizontal { height:8px; background:#ffd6dd; border-radius:4px;} QSlider::handle:horizontal{ background:white; border:2px solid #ffc2cc; width:18px; margin:-6px 0; border-radius:9px }")
+        self.font_slider.valueChanged.connect(self.on_font_size_changed)
         font_row.addWidget(self.font_slider)
         root.addLayout(font_row)
 
-        # Small spacer
         root.addSpacing(6)
 
-        # Grid with pill controls (to mimic positions in mockup)
+        # Grid
         grid = QGridLayout()
         grid.setHorizontalSpacing(18)
         grid.setVerticalSpacing(10)
 
-        # Row 0: Tema (Sylveon) | Tamaño Cartas (Normal)
-        btn_tema = QPushButton('Sylveon')
-        btn_tema.setProperty('class', 'pill')
-        btn_tema.setFixedHeight(36)
+        # Row 0: Tema
         lbl_tema = QLabel('Tema')
         lbl_tema.setProperty('class', 'label_pill')
         lbl_tema.setFixedHeight(36)
+        
+        self.btn_tema = QPushButton('Umbreon (Oscuro)' if self.settings["tema_oscuro"] else 'Sylveon (Claro)')
+        self.btn_tema.setProperty('class', 'pill')
+        self.btn_tema.setFixedHeight(36)
+        self.btn_tema.clicked.connect(self.toggle_theme)
+
         grid.addWidget(lbl_tema, 0, 0)
-        grid.addWidget(btn_tema, 0, 1)
+        grid.addWidget(self.btn_tema, 0, 1)
 
         lbl_tamcart = QLabel('Tamaño Cartas')
         lbl_tamcart.setProperty('class', 'label_pill')
         lbl_tamcart.setFixedHeight(36)
-        btn_tamcart = QPushButton('Normal')
-        btn_tamcart.setProperty('class', 'pill')
-        btn_tamcart.setFixedHeight(36)
+        self.btn_tamcart = QPushButton(self.settings["tamano_cartas"])
+        self.btn_tamcart.setProperty('class', 'pill')
+        self.btn_tamcart.setFixedHeight(36)
+        self.btn_tamcart.clicked.connect(self.toggle_card_size)
         grid.addWidget(lbl_tamcart, 0, 2)
-        grid.addWidget(btn_tamcart, 0, 3)
+        grid.addWidget(self.btn_tamcart, 0, 3)
 
-        # Row 1: Animaciones toggle (SI) | Cambiar Música (1)
+        # Row 1: Animaciones toggle
         lbl_anim = QLabel('Animaciones')
         lbl_anim.setProperty('class', 'label_pill')
         lbl_anim.setFixedHeight(36)
         grid.addWidget(lbl_anim, 1, 0)
 
-        btn_anim_si = QPushButton('SI')
-        btn_anim_si.setProperty('class', 'pill')
-        btn_anim_si.setFixedHeight(36)
-        # mark selected style via class on the widget
-        btn_anim_si.setProperty('class', 'pill selected')
-        grid.addWidget(btn_anim_si, 1, 1)
+        self.btn_anim_si = QPushButton('SI' if self.settings["animaciones"] else 'NO')
+        self.btn_anim_si.setProperty('class', 'pill selected' if self.settings["animaciones"] else 'pill')
+        self.btn_anim_si.setFixedHeight(36)
+        self.btn_anim_si.clicked.connect(self.toggle_animations)
+        grid.addWidget(self.btn_anim_si, 1, 1)
 
         lbl_cambiar = QLabel('Cambiar Música')
         lbl_cambiar.setProperty('class', 'label_pill')
         lbl_cambiar.setFixedHeight(36)
         grid.addWidget(lbl_cambiar, 1, 2)
 
-        spin_change = QSpinBox()
-        spin_change.setRange(0, 10)
-        spin_change.setValue(1)
-        spin_change.setFixedHeight(36)
-        grid.addWidget(spin_change, 1, 3)
+        self.spin_change = QSpinBox()
+        self.spin_change.setRange(1, 3)
+        self.spin_change.setValue(self.settings["pista_musica"])
+        self.spin_change.setFixedHeight(36)
+        self.spin_change.valueChanged.connect(self.on_music_track)
+        grid.addWidget(self.spin_change, 1, 3)
 
         # Row 2: Idioma
         lbl_idioma = QLabel('Idioma')
         lbl_idioma.setProperty('class', 'label_pill')
         lbl_idioma.setFixedHeight(36)
-        combo_lang = QComboBox()
-        combo_lang.addItems(['Español', 'English'])
-        combo_lang.setFixedHeight(36)
+        self.combo_lang = QComboBox()
+        self.combo_lang.addItems(['Español', 'English'])
+        self.combo_lang.setCurrentText(self.settings["idioma"])
+        self.combo_lang.setFixedHeight(36)
+        self.combo_lang.currentIndexChanged.connect(self.on_language_changed)
         grid.addWidget(lbl_idioma, 2, 0)
-        grid.addWidget(combo_lang, 2, 1)
+        grid.addWidget(self.combo_lang, 2, 1)
 
-        # Fill remaining columns with spacers
         grid.setColumnStretch(4, 1)
-
         root.addLayout(grid)
 
-        # Footer buttons
+        # Footer
         footer = QHBoxLayout()
         footer.addStretch()
-        btn_rest = QPushButton('Restaurar valores')
-        btn_save = QPushButton('Guardar')
-        for b in (btn_rest, btn_save):
+        
+        self.btn_logout = QPushButton('Cerrar sesión')
+        self.btn_logout.setProperty('class', 'pill logout_btn')
+        self.btn_logout.setFixedHeight(36)
+        footer.addWidget(self.btn_logout)
+
+        self.btn_rest = QPushButton('Restaurar valores')
+        self.btn_save = QPushButton('Guardar')
+        for b in (self.btn_rest, self.btn_save):
             b.setProperty('class', 'pill')
             b.setFixedHeight(36)
-        footer.addWidget(btn_rest)
-        footer.addWidget(btn_save)
+            footer.addWidget(b)
+            
+        self.btn_logout.clicked.connect(self.logout_requested.emit)
+        self.btn_rest.clicked.connect(self.restaurar_valores)
+        self.btn_save.clicked.connect(self.guardar_valores)
 
         root.addLayout(footer)
-
-        # Minimum recommended width so it looks like the design
         self.setMinimumWidth(700)
 
+    # --- Callbacks Instantáneos ---
+    def on_music_volume(self, val):
+        self.settings["volumen_musica"] = val
+        save_settings(self.settings)
+        self.music_volume_changed.emit(val)
 
-if __name__ == '__main__':
-    from PyQt6.QtWidgets import QApplication
-    import sys
+    def on_sound_volume(self, val):
+        self.settings["volumen_sonido"] = val
+        save_settings(self.settings)
+        self.sound_volume_changed.emit(val)
 
-    app = QApplication(sys.argv)
-    w = AjustesWidget()
-    w.show()
-    sys.exit(app.exec())
+    def on_music_track(self, val):
+        self.settings["pista_musica"] = val
+        save_settings(self.settings)
+        self.music_track_changed.emit(val)
+
+    def on_font_size_changed(self, val):
+        self.settings["tamano_fuente"] = val
+        save_settings(self.settings)
+        app = QApplication.instance()
+        if app:
+            from MyQtApp.config import apply_global_style
+            apply_global_style(app)
+
+    def on_language_changed(self, index):
+        self.settings["idioma"] = self.combo_lang.currentText()
+        save_settings(self.settings)
+
+    def toggle_card_size(self):
+        sizes = ["Pequeño", "Normal", "Grande"]
+        current = self.settings.get("tamano_cartas", "Normal")
+        try:
+            next_idx = (sizes.index(current) + 1) % len(sizes)
+        except ValueError:
+            next_idx = 1
+        next_size = sizes[next_idx]
+        self.settings["tamano_cartas"] = next_size
+        self.btn_tamcart.setText(next_size)
+        save_settings(self.settings)
+        self.card_size_changed.emit(next_size)
+
+    def toggle_animations(self):
+        self.settings["animaciones"] = not self.settings["animaciones"]
+        encendido = self.settings["animaciones"]
+        self.btn_anim_si.setText('SI' if encendido else 'NO')
+        self.btn_anim_si.setProperty('class', 'pill selected' if encendido else 'pill')
+        self.btn_anim_si.style().unpolish(self.btn_anim_si)
+        self.btn_anim_si.style().polish(self.btn_anim_si)
+        save_settings(self.settings)
+        self.animations_toggled.emit(encendido)
+
+    def toggle_theme(self):
+        app = QApplication.instance()
+        if not app:
+            return
+
+        self.settings["tema_oscuro"] = not self.settings["tema_oscuro"]
+        es_oscuro = self.settings["tema_oscuro"]
+        
+        self.btn_tema.setText('Umbreon (Oscuro)' if es_oscuro else 'Sylveon (Claro)')
+        save_settings(self.settings)
+        
+        from MyQtApp.config import apply_global_style
+        apply_global_style(app)
+                
+        self.theme_toggled.emit(es_oscuro)
+
+    # --- Persistencia ---
+    def restaurar_valores(self):
+        self.settings = DEFAULT_SETTINGS.copy()
+        save_settings(self.settings)
+        
+        # Bloquear temporalmente señales para evitar disparos múltiples durante el reset visual
+        self.slider_musica.blockSignals(True)
+        self.slider_sonido.blockSignals(True)
+        self.font_slider.blockSignals(True)
+        self.spin_change.blockSignals(True)
+        self.combo_lang.blockSignals(True)
+        
+        self.slider_musica.setValue(self.settings["volumen_musica"])
+        self.slider_sonido.setValue(self.settings["volumen_sonido"])
+        self.font_slider.setValue(self.settings["tamano_fuente"])
+        self.spin_change.setValue(self.settings["pista_musica"])
+        self.combo_lang.setCurrentText(self.settings["idioma"])
+        self.btn_tamcart.setText(self.settings["tamano_cartas"])
+        
+        self.slider_musica.blockSignals(False)
+        self.slider_sonido.blockSignals(False)
+        self.font_slider.blockSignals(False)
+        self.spin_change.blockSignals(False)
+        self.combo_lang.blockSignals(False)
+        
+        self.btn_tema.setText('Sylveon (Claro)')
+        self.btn_anim_si.setText('SI')
+        self.btn_anim_si.setProperty('class', 'pill selected')
+        self.btn_anim_si.style().unpolish(self.btn_anim_si)
+        self.btn_anim_si.style().polish(self.btn_anim_si)
+        
+        app = QApplication.instance()
+        if app:
+            from MyQtApp.config import apply_global_style
+            apply_global_style(app)
+            
+        self.music_volume_changed.emit(self.settings["volumen_musica"])
+        self.sound_volume_changed.emit(self.settings["volumen_sonido"])
+        self.music_track_changed.emit(self.settings["pista_musica"])
+        self.animations_toggled.emit(self.settings["animaciones"])
+        self.theme_toggled.emit(self.settings["tema_oscuro"])
+        self.card_size_changed.emit(self.settings["tamano_cartas"])
+
+    def guardar_valores(self):
+        save_settings(self.settings)
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Ajustes Guardados", "Los ajustes se han guardado y aplicado correctamente.")

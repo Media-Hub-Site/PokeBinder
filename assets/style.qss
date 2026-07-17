@@ -1,0 +1,319 @@
+/* Archivo de Estilos Globales (QSS) */
+
+/* Fondos Generales */
+QWidget#MainBackground, QWidget#LoginBackground {
+    background-color: #ffeef2;
+    border-radius: 20px;
+}
+
+/* Panel lateral (Index.py) */
+QWidget#side {
+    background-color: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #ffe1ea, stop:1 #ffd6e6);
+    border-radius: 18px;
+    border: 2px solid #f3c8d1;
+}
+
+/* Contenido Principal (Index.py) */
+QWidget#content {
+    background-color: #fff7f8;
+    border: 3px solid #f2d8db;
+    border-radius: 12px;
+}
+
+/* Botones de Navegación Principales */
+QPushButton[class="NavButton"] {
+    background-color: #f7a8b8;
+    color: white;
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 12px;
+    border: 2px solid #f29ca4;
+    text-align: left;
+    padding-left: 15px;
+}
+QPushButton[class="NavButton"]:hover {
+    background-color: #f56b7b;
+    border-color: #f5475c;
+}
+QPushButton[class="NavButton"]:pressed {
+    background-color: #d44854;
+    border-color: #b33a46;
+}
+
+/* Botones Secundarios (Agregar, Eliminar, Vaciar) */
+QPushButton[class="ActionSecondary"] {
+    background-color: #c8a2c8;
+    color: white;
+    font-weight: 600;
+    font-size: 13px;
+    border-radius: 12px;
+    border: 2px solid #b484b4;
+    text-align: center;
+}
+QPushButton[class="ActionSecondary"]:hover {
+    background-color: #bb8fbb;
+    border-color: #a371a3;
+}
+QPushButton[class="ActionSecondary"]:pressed {
+    background-color: #9e6f9e;
+    border-color: #815d81;
+}
+
+/* Botón de Salir */
+QPushButton[class="ExitButton"] {
+    background-color: #f78fb3;
+    color: white;
+    font-weight: 700;
+    font-size: 16px;
+    border-radius: 14px;
+    border: 2px solid #b52b2b;
+    text-align: center;
+}
+QPushButton[class="ExitButton"]:hover {
+    background-color: #c9302c;
+    border-color: #8b1c1c;
+}
+QPushButton[class="ExitButton"]:pressed {
+    background-color: #a92727;
+    border-color: #6a1818;
+}
+
+/* Botones de Vista (Grid/List) */
+QPushButton[class="ViewGrid"] {
+    background-color: qlineargradient(x1:0 y1:0, x2:0 y2:1, stop:0 #d7a8e0, stop:1 #c48ad6);
+    color: white;
+    border-radius: 12px;
+    font-size: 20px;
+    font-weight: 700;
+    border: 2px solid #b07ab9;
+}
+QPushButton[class="ViewGrid"]:pressed { margin-top: 1px; }
+
+QPushButton[class="ViewList"] {
+    background-color: #f0f0f0;
+    color: #5a2a3a;
+    border-radius: 12px;
+    font-size: 20px;
+    font-weight: 700;
+    border: 2px solid #e0d3d6;
+}
+QPushButton[class="ViewList"]:pressed { margin-top: 1px; }
+
+/* MessageBox Global */
+QMessageBox {
+    background-color: #ffeef2;
+    border-radius: 15px;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    color: #5a2a3a;
+}
+QMessageBox QPushButton {
+    background-color: #f7a8b8;
+    color: white;
+    border-radius: 10px;
+    padding: 8px 15px;
+    font-weight: 600;
+    min-width: 80px;
+    margin: 5px;
+    border: 2px solid #f29ca4;
+}
+QMessageBox QPushButton:hover {
+    background-color: #f56b7b;
+    border-color: #f5475c;
+}
+QMessageBox QPushButton:pressed {
+    background-color: #d44854;
+    border-color: #b33a46;
+}
+
+/* Filtros y Buscador (Galeria e Inventario) */
+QLineEdit[class="SearchInput"] {
+    padding: 8px 12px;
+    border: 2px solid #f7a8b8;
+    border-radius: 12px;
+    background-color: #ffffff;
+    color: #5a2a3a;
+    font-size: 14px;
+}
+QLineEdit[class="SearchInput"]:focus {
+    border: 2px solid #e08fa0;
+    background-color: #fff7f8;
+}
+
+QComboBox[class="FilterCombo"] {
+    padding: 6px 12px;
+    border: 2px solid #f7a8b8;
+    border-radius: 10px;
+    background-color: #ffffff;
+    color: #5a2a3a;
+    font-weight: 500;
+}
+QComboBox[class="FilterCombo"]::drop-down {
+    border: none;
+}
+QComboBox[class="FilterCombo"] QAbstractItemView {
+    background-color: #ffffff;
+    color: #5a2a3a;
+    selection-background-color: #f7a8b8;
+    selection-color: white;
+    border-radius: 5px;
+}
+
+/* Paginación */
+QPushButton[class="PaginationBtn"] {
+    background-color: #ffffff;
+    color: #d66b78;
+    border: 2px solid #f7a8b8;
+    border-radius: 14px;
+    padding: 6px 16px;
+    font-weight: bold;
+}
+QPushButton[class="PaginationBtn"]:hover {
+    background-color: #fff7f8;
+    border-color: #f56b7b;
+}
+QPushButton[class="PaginationBtn"]:pressed {
+    background-color: #ffdfe6;
+}
+QPushButton[class="PaginationBtn"]:disabled {
+    background-color: #f5f5f5;
+    color: #a0a0a0;
+    border-color: #dcdcdc;
+}
+
+QLabel[class="PaginationLabel"] {
+    color: #5a2a3a;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 0 10px;
+}
+
+/* Pantalla de Login */
+QLineEdit#LoginInput {
+    border: 2px solid #f3c6d3;
+    border-radius: 12px;
+    padding-left: 10px;
+    background-color: #fff0f6;
+    font-size: 14px;
+    color: #5a3e4a;
+}
+QLineEdit#LoginInput:focus {
+    border-color: #d46a6a;
+    background-color: #ffe3e3;
+}
+QPushButton#LoginBtn {
+    background-color: #f7a8b8;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    border-radius: 15px;
+    border: 2px solid #f29ca4;
+}
+QPushButton#LoginBtn:hover {
+    background-color: #f56b7b;
+    border-color: #f5475c;
+}
+QPushButton#LoginBtn:pressed {
+    background-color: #d44854;
+    border-color: #b33a46;
+}
+
+/* Botones del Binder */
+QPushButton[class="BinderNavBtn"] {
+    background-color: #f7a8b8; color: white; border-radius: 8px; padding: 5px 15px; font-weight: bold; border: 1px solid #e08fa0;
+}
+QPushButton[class="BinderNavBtn"]:hover { background-color: #f56b7b; }
+
+/* Ajustes */
+QWidget#ajustes_root { background-color: #c87d86; border-radius: 14px; }
+QLabel[class="header"] { color: #fff7f8; font-weight: 700; font-size: 18px; }
+QLabel[class="label_pill"] { background: #ffffff; color: #d66b78; border-radius: 18px; padding: 8px 16px; }
+
+QPushButton[class="pill"] { background: #fff7f8; color: #d66b78; border: 2px solid #f7a8b8; border-radius: 18px; padding: 6px 14px; }
+QPushButton[class="pill"]:pressed { background:#ffdfe6 }
+QPushButton[class="pill selected"] { background: #bff6c7; color: #24603a; border:2px solid #86d99c }
+
+QSlider::groove:horizontal { height:8px; background:#ffd6dd; border-radius:4px;}
+QSlider::handle:horizontal{ background:white; border:2px solid #ffc2cc; width:18px; margin:-6px 0; border-radius:9px }
+
+/* Login Card y Botón de Desconexión */
+QFrame#LoginCard {
+    background-color: #ffffff;
+    border: 2px solid #f3c8d1;
+    border-radius: 20px;
+}
+QPushButton[class="pill logout_btn"] {
+    background-color: #f78fb3;
+    color: white;
+    border-color: #f29ca4;
+}
+QPushButton[class="pill logout_btn"]:hover {
+    background-color: #f56b7b;
+    border-color: #f5475c;
+}
+
+/* Auto-Updater Styles */
+QDialog#UpdateDialog {
+    background-color: #fff7f8;
+    border: 3px solid #f2d8db;
+    border-radius: 12px;
+}
+QLabel#UpdateTitle {
+    font-size: 18px;
+    font-weight: bold;
+    color: #d66b78;
+}
+QLabel#UpdateVersions {
+    font-size: 13px;
+    color: #666666;
+}
+QLabel#UpdateNotesTitle {
+    font-weight: bold;
+    color: #4a4a4a;
+}
+QTextBrowser#UpdateNotesBrowser {
+    background-color: #ffffff;
+    border: 1px solid #f2d8db;
+    border-radius: 8px;
+    color: #4a4a4a;
+    padding: 8px;
+    font-size: 13px;
+}
+QProgressBar#UpdateProgressBar {
+    border: 2px solid #ffd6dd;
+    border-radius: 5px;
+    text-align: center;
+    background-color: #ffffff;
+    color: #d66b78;
+    font-weight: bold;
+}
+QProgressBar#UpdateProgressBar::chunk {
+    background-color: #f7a8b8;
+    width: 20px;
+}
+QLabel#UpdateStatusLabel {
+    font-size: 12px;
+    color: #888888;
+}
+QPushButton#UpdateLaterBtn {
+    background-color: #f2d8db;
+    color: #d66b78;
+    font-weight: bold;
+    border-radius: 10px;
+    border: 1px solid #ffcbd4;
+}
+QPushButton#UpdateLaterBtn:hover {
+    background-color: #ffcbd4;
+}
+QPushButton#UpdateNowBtn {
+    background-color: #f7a8b8;
+    color: white;
+    font-weight: bold;
+    border-radius: 10px;
+    border: 2px solid #f29ca4;
+}
+QPushButton#UpdateNowBtn:hover {
+    background-color: #f56b7b;
+}
+
+

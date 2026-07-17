@@ -1,25 +1,35 @@
-
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel,
-    QLineEdit, QPushButton, QMessageBox
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QMessageBox, QFrame
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..session import SessionLocal
 from ..models import Usuarios
 
 
 class LoginWindow(QWidget):
+    login_successful = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Inicio de Sesión")
-        self.setGeometry(600, 300, 350, 180)
+        self.setObjectName("LoginBackground")
 
         self.session = SessionLocal()
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        # Layout principal para centrar la tarjeta de login
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Crear tarjeta central de Login (LoginCard)
+        card = QFrame()
+        card.setObjectName("LoginCard")
+        card.setFixedSize(380, 260)
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(30, 30, 30, 30)
+        card_layout.setSpacing(18)
 
         self.label = QLabel("Ingresa tu nombre de usuario:")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -27,59 +37,22 @@ class LoginWindow(QWidget):
 
         self.input_username = QLineEdit()
         self.input_username.setPlaceholderText("Nombre de usuario")
-        self.input_username.setFixedHeight(35)
-        self.input_username.setStyleSheet("""
-            QLineEdit {
-                border: 2px solid #f3c6d3;
-                border-radius: 12px;
-                padding-left: 10px;
-                background-color: #fff0f6;
-                font-size: 14px;
-                color: #5a3e4a;
-            }
-            QLineEdit:focus {
-                border-color: #d46a6a;
-                background-color: #ffe3e3;
-            }
-        """)
+        self.input_username.setFixedHeight(38)
+        self.input_username.setObjectName("LoginInput")
 
         self.btn_login = QPushButton("Entrar / Crear usuario")
-        self.btn_login.setFixedHeight(40)
-        self.btn_login.setStyleSheet("""
-            QPushButton {
-                background-color: #f7a8b8;
-                color: white;
-                font-weight: bold;
-                font-size: 14px;
-                border-radius: 15px;
-                border: 2px solid #f29ca4;
-            }
-            QPushButton:hover {
-                background-color: #f56b7b;
-                border-color: #f5475c;
-            }
-            QPushButton:pressed {
-                background-color: #d44854;
-                border-color: #b33a46;
-            }
-        """)
+        self.btn_login.setFixedHeight(42)
+        self.btn_login.setObjectName("LoginBtn")
+        self.btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_login.clicked.connect(self.handle_login)
 
-        layout.addWidget(self.label)
-        layout.addWidget(self.input_username)
-        layout.addWidget(self.btn_login)
+        card_layout.addWidget(self.label)
+        card_layout.addWidget(self.input_username)
+        card_layout.addWidget(self.btn_login)
 
-        self.setLayout(layout)
-
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #ffeef2;
-                border-radius: 20px;
-            }
-        """)
+        main_layout.addWidget(card, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.usuario_logueado = None
-
 
     def mostrar_mensaje(self, titulo, mensaje, tipo="info"):
         msg_box = QMessageBox(self)
@@ -94,36 +67,7 @@ class LoginWindow(QWidget):
             msg_box.setIcon(QMessageBox.Icon.Critical)
 
         msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-
-        msg_box.setStyleSheet("""
-            QMessageBox {
-                background-color: #ffeef2;
-                border-radius: 15px;
-                font-size: 14px;
-                color: #5a2a3a;
-            }
-            QPushButton {
-                background-color: #f7a8b8;
-                color: white;
-                border-radius: 10px;
-                padding: 8px 15px;
-                font-weight: 600;
-                min-width: 80px;
-                margin: 5px;
-                border: 2px solid #f29ca4;
-            }
-            QPushButton:hover {
-                background-color: #f56b7b;
-                border-color: #f5475c;
-            }
-            QPushButton:pressed {
-                background-color: #d44854;
-                border-color: #b33a46;
-            }
-        """)
-
         msg_box.exec()
-
 
     def handle_login(self):
         username = self.input_username.text().strip()
@@ -148,8 +92,13 @@ class LoginWindow(QWidget):
                 return
 
         self.usuario_logueado = username
-        self.close()
+        self.login_successful.emit(username)
 
 
     def get_usuario(self):
         return self.usuario_logueado
+
+    def closeEvent(self, event):
+        if hasattr(self, 'session') and self.session:
+            self.session.close()
+        super().closeEvent(event)

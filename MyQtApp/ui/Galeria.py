@@ -21,8 +21,85 @@ class ClickableLabel(QLabel):
         self.seleccionada = False
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.ejecutar_animacion_burbuja()
         self.clicked.emit(self.id_carta)
 
+    def ejecutar_animacion_burbuja(self):
+        parent = self.window()
+        if not parent:
+            return
+
+        from PyQt6.QtWidgets import QWidget, QGraphicsOpacityEffect
+        from PyQt6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QPoint, QRect, QEasingCurve
+
+        burbuja = QWidget(parent)
+        # Burbuja circular con degradado brillante y bordes redondos dinámicos
+        burbuja.setStyleSheet("""
+            background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                stop:0 rgba(255, 255, 255, 220),
+                stop:0.5 rgba(243, 200, 209, 130),
+                stop:0.8 rgba(255, 182, 193, 60),
+                stop:1 rgba(255, 255, 255, 0));
+            border: 2px solid rgba(255, 255, 255, 200);
+            border-radius: 999px;
+        """)
+
+        # Posición global del Label
+        pos_global = self.mapTo(parent, QPoint(0, 0))
+        w = self.width()
+        h = self.height()
+        centro = QPoint(pos_global.x() + w // 2, pos_global.y() + h // 2)
+
+        # Dimensiones iniciales
+        tam_inicial = 8
+        r_inicial = QRect(centro.x() - tam_inicial // 2, centro.y() - tam_inicial // 2, tam_inicial, tam_inicial)
+        burbuja.setGeometry(r_inicial)
+        burbuja.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        burbuja.show()
+
+        # Efecto de opacidad
+        opacidad = QGraphicsOpacityEffect(burbuja)
+        burbuja.setGraphicsEffect(opacidad)
+
+        # Animación de escala (crecimiento)
+        tam_final = max(w, h) + 30
+        r_final = QRect(centro.x() - tam_final // 2, centro.y() - tam_final // 2, tam_final, tam_final)
+
+        anim_geom = QPropertyAnimation(burbuja, b"geometry", self)
+        anim_geom.setDuration(350)
+        anim_geom.setStartValue(r_inicial)
+        anim_geom.setEndValue(r_final)
+        anim_geom.setEasingCurve(QEasingCurve.Type.OutQuad)
+
+        # Animación de desvanecimiento
+        anim_opac = QPropertyAnimation(opacidad, b"opacity", self)
+        anim_opac.setDuration(350)
+        anim_opac.setStartValue(1.0)
+        anim_opac.setEndValue(0.0)
+        anim_opac.setEasingCurve(QEasingCurve.Type.InQuad)
+
+        # Grupo paralelo
+        grupo = QParallelAnimationGroup(self)
+        grupo.addAnimation(anim_geom)
+        grupo.addAnimation(anim_opac)
+
+        # Evitar recolección de basura
+        if not hasattr(self, '_burbujas_activas'):
+            self._burbujas_activas = []
+        item_ref = (burbuja, opacidad, grupo)
+        self._burbujas_activas.append(item_ref)
+
+        def limpiar():
+            burbuja.deleteLater()
+            if item_ref in self._burbujas_activas:
+                self._burbujas_activas.remove(item_ref)
+
+        grupo.finished.connect(limpiar)
+        grupo.start()
+
+
+from MyQtApp.config import SOUNDS_DIR
 
 class GaleriaCartas(QWidget):
     CARTAS_POR_PAGINA = 30
@@ -42,6 +119,7 @@ class GaleriaCartas(QWidget):
         # Filtros UI
         header_layout = QHBoxLayout()
         self.buscador = QLineEdit()
+        self.buscador.setProperty("class", "SearchInput")
         self.buscador.setPlaceholderText("🔍 Buscar carta por nombre...")
         self.timer_busqueda = QTimer()
         self.timer_busqueda.setSingleShot(True)
@@ -63,6 +141,7 @@ class GaleriaCartas(QWidget):
             combo = QComboBox()
             combo.addItem("Todos")
             combo.setFixedWidth(130)
+            combo.setProperty("class", "FilterCombo")
             combo.currentIndexChanged.connect(self.reset_page_and_actualizar)
             self.filtros[columna] = combo
             header_layout.addWidget(combo)
@@ -76,6 +155,7 @@ class GaleriaCartas(QWidget):
         self.scroll.setFixedHeight(460)
 
         self.container = QWidget()
+        self.container.setObjectName("GaleriaContainer")
         self.grid = QGridLayout(self.container)
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
@@ -89,8 +169,11 @@ class GaleriaCartas(QWidget):
         # Paginación
         paginacion_layout = QHBoxLayout()
         self.btn_anterior = QPushButton("⬅ Anterior")
+        self.btn_anterior.setProperty("class", "PaginationBtn")
         self.btn_siguiente = QPushButton("Siguiente ➡")
+        self.btn_siguiente.setProperty("class", "PaginationBtn")
         self.lbl_pagina = QLabel("")
+        self.lbl_pagina.setProperty("class", "PaginationLabel")
         self.lbl_pagina.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.btn_anterior.clicked.connect(self.pagina_anterior)
@@ -101,32 +184,9 @@ class GaleriaCartas(QWidget):
         paginacion_layout.addWidget(self.btn_siguiente)
         self.main_layout.addLayout(paginacion_layout)
 
-        # Estilo pastel
-        self.setStyleSheet("""
-            QLineEdit {
-                padding: 6px;
-                border: 2px solid #e7a7c7;
-                border-radius: 10px;
-                background-color: #ffeaf4;
-            }
-            QComboBox {
-                padding: 4px 8px;
-                border: 2px solid #e7a7c7;
-                border-radius: 10px;
-                background-color: #ffeaf4;
-            }
-            QPushButton {
-                padding: 6px 12px;
-                border: 2px solid #e7a7c7;
-                border-radius: 8px;
-                background-color: #ffd6e8;
-                font-weight: bold;
-            }
-        """)
-
         # Sonido
         self.sonido_pagina = QSoundEffect()
-        self.sonido_pagina.setSource(QUrl.fromLocalFile("assets/sounds/paginas.wav"))
+        self.sonido_pagina.setSource(QUrl.fromLocalFile(os.path.join(SOUNDS_DIR, "paginas.wav")))
         self.sonido_pagina.setVolume(0.5)
 
         self.cargar_filtros()
@@ -179,6 +239,17 @@ class GaleriaCartas(QWidget):
 
         self.labels_por_id.clear()
 
+        # Obtener dimensiones de carta desde ajustes
+        from MyQtApp.config import load_settings
+        settings = load_settings()
+        tam = settings.get("tamano_cartas", "Normal")
+        if tam == "Pequeño":
+            size = (90, 127)
+        elif tam == "Grande":
+            size = (150, 212)
+        else: # Normal
+            size = (120, 170)
+
         query = self.session.query(Cartas)
 
         if text := self.buscador.text().strip().lower():
@@ -194,26 +265,32 @@ class GaleriaCartas(QWidget):
 
         row, col = 0, 0
         for carta in cartas:
-            pix = None
-            posibles = [
-                f"{carta.nombre.lower().replace(' ','_')}.webp",
-                f"{carta.nombre.lower().replace(' ','_')}.png",
-                f"{carta.nombre.lower().replace(' ','_')}.jpg",
-            ]
 
-            for file in posibles:
-                pix = get_pixmap_from_zip(file, size=(120, 170))
-                if pix: break
-                ruta = os.path.join(self.path_imagenes, file)
-                if os.path.exists(ruta):
-                    pix = QPixmap(ruta).scaled(120, 170, Qt.KeepAspectRatio)
-                    break
+            nombre_archivo = carta.nombre.lower().replace(' ','_')
+            print(f"\nIntentando cargar imagen para carta: {carta.nombre} (ID: {carta.id_api})")
+            
+            # Intentar cargar usando el nombre y el ID
+            pix = get_pixmap_from_zip(nombre_archivo, size=size, id_api=carta.id_api)
+            
+            # Si no se encontró con get_pixmap_from_zip, intentar ruta alternativa
+            if not pix:
+                ruta_alt = os.path.join(self.path_imagenes, f"{nombre_archivo}_{carta.id_api}.webp")
+                print(f"Intentando ruta alternativa: {ruta_alt}")
+                if os.path.exists(ruta_alt):
+                    print("✅ Imagen encontrada en ruta alternativa")
+                    pix = QPixmap(ruta_alt).scaled(size[0], size[1], Qt.KeepAspectRatio)
 
             if not pix:
+                print("❌ No se pudo cargar ninguna imagen")
                 continue
 
+            print(f"Dimensiones del pixmap: {pix.width()}x{pix.height()}")
+            
             lbl = ClickableLabel(carta.id_api)
             lbl.setPixmap(pix)
+            lbl.setMinimumSize(size[0], size[1])  # Asegurar tamaño mínimo
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Centrar la imagen
+
             lbl.clicked.connect(self.seleccionar_carta)
 
             if carta.id_api in self.cartas_seleccionadas:
@@ -235,6 +312,10 @@ class GaleriaCartas(QWidget):
         if self.current_page > 0:
             self.current_page -= 1
             self.actualizar_con_transicion()
+            from MyQtApp.config import load_settings
+            settings = load_settings()
+            vol = (settings.get("volumen_sonido", 80) / 100.0) * 0.5
+            self.sonido_pagina.setVolume(vol)
             self.sonido_pagina.play()
 
     def pagina_siguiente(self):
@@ -242,6 +323,10 @@ class GaleriaCartas(QWidget):
         if self.current_page < total_paginas - 1:
             self.current_page += 1
             self.actualizar_con_transicion()
+            from MyQtApp.config import load_settings
+            settings = load_settings()
+            vol = (settings.get("volumen_sonido", 80) / 100.0) * 0.5
+            self.sonido_pagina.setVolume(vol)
             self.sonido_pagina.play()
 
     def seleccionar_carta(self, id_carta):

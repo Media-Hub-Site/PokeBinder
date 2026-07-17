@@ -43,4 +43,4 @@ class UsuarioCarta(Base):
     usuario = relationship("Usuarios", back_populates="cartas", foreign_keys=[usuario_nombre])
     carta = relationship("Cartas", back_populates="usuarios", foreign_keys=[carta_id])
 
-Base.metadata.create_all(bind=engine)
+# Las tablas se crean desde main.py
