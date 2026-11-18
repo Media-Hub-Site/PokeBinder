@@ -3,15 +3,22 @@ import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, 
     QGridLayout, QFrame, QPushButton, QApplication, QSizePolicy,
-    QStackedWidget, QGraphicsOpacityEffect
+    QStackedWidget, QGraphicsOpacityEffect, QLineEdit, QComboBox
 )
-from PyQt6.QtCore import Qt, QMimeData, QPoint, QSize, QEasingCurve, QPropertyAnimation, QRect
+from PyQt6.QtCore import Qt, QMimeData, QPoint, QSize, QEasingCurve, QPropertyAnimation, QRect, QTimer
 from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction
+from sqlalchemy import func
 
 from MyQtApp.config import ASSETS_DIR, IMAGES_DIR
 from ..session import SessionLocal
 from ..models import Cartas, UsuarioCarta
-from ..app.getImgs import get_pixmap_from_zip
+from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap
+from MyQtApp.i18n import t, language_manager
+from MyQtApp.ui.CardWidget import CardZoomOverlay, VariantBadgeButton, LanguageBadgeLabel
+from MyQtApp.ui.toast import show_toast
+
+
+
 
 # --- CONSTANTS & CONFIGURATION ---
 BINDER_DATA_FILE = os.path.join(ASSETS_DIR, "binder_data.json")
@@ -56,35 +63,85 @@ class DraggableCardLabel(QLabel):
         super().__init__(parent)
         self.id_api = id_api
         self.nombre_archivo = nombre_archivo
+        self.drag_start_position = QPoint()
         self.setPixmap(pixmap)
         self.setScaledContents(True)
         self.setFixedSize(100, 140)  # Adjust size as needed
         self.setStyleSheet("border: 1px solid #ddd; border-radius: 5px;")
         
+        self.long_press_timer = QTimer(self)
+        self.long_press_timer.setSingleShot(True)
+        self.long_press_timer.timeout.connect(self._on_long_press)
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_start_position = event.pos()
+        try:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.drag_start_position = event.pos()
+                self.long_press_timer.start(260)
+            super().mousePressEvent(event)
+        except Exception as e:
+            print(f"Error en DraggableCardLabel mousePressEvent: {e}")
 
     def mouseMoveEvent(self, event):
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            return
-        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
-            return
+        try:
+            if not (event.buttons() & Qt.MouseButton.LeftButton):
+                return
+            if getattr(self, 'drag_start_position', None) and (event.pos() - self.drag_start_position).manhattanLength() >= QApplication.startDragDistance():
+                self.long_press_timer.stop()
 
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        
-        # Pass card ID and source info
-        mime_data.setText(self.id_api)
-        mime_data.setProperty("source", "inventory")
-        mime_data.setProperty("nombre_archivo", self.nombre_archivo)
-        drag.setMimeData(mime_data)
+                drag = QDrag(self)
+                mime_data = QMimeData()
+                
+                # Pass card ID and source info
+                mime_data.setText(self.id_api)
+                mime_data.setProperty("source", "inventory")
+                mime_data.setProperty("nombre_archivo", self.nombre_archivo)
+                mime_data.setProperty("idioma", getattr(self, "idioma", "en") or "en")
+                drag.setMimeData(mime_data)
 
-        # Set drag pixmap
-        drag.setPixmap(self.pixmap().scaled(80, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        drag.setHotSpot(event.pos())
+                # Set drag pixmap
+                if self.pixmap() and not self.pixmap().isNull():
+                    drag.setPixmap(self.pixmap().scaled(80, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                drag.setHotSpot(event.pos())
 
-        drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
+                drag.exec(Qt.DropAction.CopyAction | Qt.DropAction.MoveAction)
+        except Exception as e:
+            print(f"Error en DraggableCardLabel mouseMoveEvent: {e}")
+
+    def mouseReleaseEvent(self, event):
+        try:
+            if self.long_press_timer.isActive():
+                self.long_press_timer.stop()
+            super().mouseReleaseEvent(event)
+        except Exception as e:
+            print(f"Error en DraggableCardLabel mouseReleaseEvent: {e}")
+
+
+    def _on_long_press(self):
+        parent_win = self.window()
+        pix = self.pixmap()
+        idioma = getattr(self, 'idioma', None)
+        if not idioma and self.id_api:
+            try:
+                session = SessionLocal()
+                c_db = session.query(Cartas).filter(Cartas.id_api == self.id_api).first()
+                session.close()
+                if c_db and c_db.idioma:
+                    idioma = c_db.idioma
+            except Exception:
+                pass
+
+        card_lang = idioma or language_manager.current_language
+        if self.nombre_archivo:
+            hi_pix = get_webp_pixmap(self.id_api, self.nombre_archivo, card_lang, size=(450, 630))
+            if not hi_pix:
+                hi_pix = get_pixmap_from_zip(self.nombre_archivo, size=(450, 630), id_api=self.id_api)
+            if hi_pix:
+                pix = hi_pix
+        if parent_win and pix and not pix.isNull():
+            origin_global = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+            overlay = CardZoomOverlay(parent_win)
+            overlay.show_zoom(pix, origin_global, id_api=self.id_api, nombre_archivo=self.nombre_archivo, idioma=idioma)
 
 class BinderSlot(QLabel):
     def __init__(self, page_index, slot_index, parent=None, binder_view=None, slot_w=120, slot_h=170, card_w=110, card_h=160):
@@ -94,26 +151,83 @@ class BinderSlot(QLabel):
         self.binder_view = binder_view
         self.id_api = None
         self.nombre_archivo = None
+        self.idioma = None
+        self.variante = "Normal"
+        self.selected = False
         self.slot_w = slot_w
         self.slot_h = slot_h
         self.card_w = card_w
         self.card_h = card_h
+        self.drag_start_position = QPoint()
+        self.variant_badge = None
+        self.lang_badge = None
         
         self.setFixedSize(slot_w, slot_h)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setAcceptDrops(True)
         self.update_style()
 
+        self.long_press_timer = QTimer(self)
+        self.long_press_timer.setSingleShot(True)
+        self.long_press_timer.timeout.connect(self._on_long_press)
+
+    def set_selected(self, val: bool):
+        if not self.id_api:
+            self.selected = False
+        else:
+            self.selected = val
+        self.update_style()
+        if self.binder_view and hasattr(self.binder_view, 'update_selection_state'):
+            self.binder_view.update_selection_state()
+
+    def _on_long_press(self):
+        if not self.id_api:
+            return
+        parent_win = self.window()
+        pix = self.pixmap()
+        idioma = getattr(self, 'idioma', None)
+        if not idioma and self.id_api:
+            try:
+                session = SessionLocal()
+                c_db = session.query(Cartas).filter(Cartas.id_api == self.id_api).first()
+                session.close()
+                if c_db and c_db.idioma:
+                    idioma = c_db.idioma
+            except Exception:
+                pass
+
+        card_lang = idioma or language_manager.current_language
+        if self.nombre_archivo:
+            hi_pix = get_webp_pixmap(self.id_api, self.nombre_archivo, card_lang, size=(450, 630))
+            if not hi_pix:
+                hi_pix = get_pixmap_from_zip(self.nombre_archivo, size=(450, 630), id_api=self.id_api)
+            if hi_pix:
+                pix = hi_pix
+        if parent_win and pix and not pix.isNull():
+            origin_global = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+            overlay = CardZoomOverlay(parent_win)
+            overlay.show_zoom(pix, origin_global, id_api=self.id_api, nombre_archivo=self.nombre_archivo, idioma=idioma)
+
     def update_style(self):
         if self.id_api:
-            self.setStyleSheet("""
-                QLabel {
-                    background-color: transparent;
-                    border: 2px solid #f29ca4;
-                    border-radius: 8px;
-                }
-            """)
+            if self.selected:
+                self.setStyleSheet("""
+                    QLabel {
+                        background-color: rgba(225, 29, 72, 0.22);
+                        border: 3.5px solid #e11d48;
+                        border-radius: 8px;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    QLabel {
+                        background-color: transparent;
+                        border: 2px solid #f29ca4;
+                        border-radius: 8px;
+                    }
+                """)
         else:
+            self.selected = False
             self.setStyleSheet("""
                 QLabel {
                     background-color: white;
@@ -123,18 +237,61 @@ class BinderSlot(QLabel):
             """)
             self.clear()
 
-    def set_card(self, id_api, nombre_archivo, pixmap):
+    def set_card(self, id_api, nombre_archivo, pixmap, idioma=None, variante="Normal"):
         self.id_api = id_api
         self.nombre_archivo = nombre_archivo
+        self.idioma = idioma
+        self.variante = variante or "Normal"
+        self.selected = False
         if pixmap:
             self.setPixmap(pixmap.scaled(self.card_w, self.card_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        self.update_style()
         
+        # Botón vertical de variante (arriba a la izquierda)
+        if not self.variant_badge:
+            self.variant_badge = VariantBadgeButton(self.id_api, self.variante, self)
+            self.variant_badge.variant_changed.connect(self._on_slot_variant_changed)
+        else:
+            self.variant_badge.id_api = self.id_api
+            self.variant_badge.set_variante(self.variante)
+
+        self.variant_badge.move(3, 3)
+        self.variant_badge.show()
+        self.variant_badge.raise_()
+
+        # Insignia de idioma (abajo a la izquierda)
+        if self.idioma:
+            if not self.lang_badge:
+                self.lang_badge = LanguageBadgeLabel(self.idioma, self)
+            else:
+                self.lang_badge.setText(self.idioma)
+            
+            bh = self.lang_badge.height()
+            self.lang_badge.move(3, self.slot_h - bh - 3)
+            self.lang_badge.show()
+            self.lang_badge.raise_()
+        elif self.lang_badge:
+            self.lang_badge.hide()
+
+        self.update_style()
+
+    def _on_slot_variant_changed(self, id_api, nueva_variante):
+        self.variante = nueva_variante
+        if self.binder_view and hasattr(self.binder_view, 'update_slot_variant'):
+            self.binder_view.update_slot_variant(self.page_index, self.slot_index, nueva_variante)
+
     def clear_card(self):
         self.id_api = None
         self.nombre_archivo = None
+        self.idioma = None
+        self.variante = "Normal"
+        self.selected = False
+        if self.variant_badge:
+            self.variant_badge.hide()
+        if self.lang_badge:
+            self.lang_badge.hide()
         self.clear()
         self.update_style()
+
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
@@ -143,109 +300,361 @@ class BinderSlot(QLabel):
             event.ignore()
 
     def dropEvent(self, event):
-        card_id = event.mimeData().text()
-        source = event.mimeData().property("source")
-        source_slot = event.mimeData().property("source_slot")
-        nombre_archivo = event.mimeData().property("nombre_archivo")
-        
-        if card_id:
-            # Tell the main view to handle the drop (update logic and UI)
-            if self.binder_view:
-                self.binder_view.handle_drop(
-                    self.page_index, self.slot_index, card_id, 
-                    source_slot=source_slot, nombre_archivo=nombre_archivo
-                )
-            event.accept()
+        try:
+            card_id = event.mimeData().text()
+            source = event.mimeData().property("source")
+            source_slot = event.mimeData().property("source_slot")
+            nombre_archivo = event.mimeData().property("nombre_archivo")
+            idioma = event.mimeData().property("idioma")
+            
+            if card_id:
+                # Tell the main view to handle the drop (update logic and UI)
+                if self.binder_view:
+                    self.binder_view.handle_drop(
+                        self.page_index, self.slot_index, card_id, 
+                        source_slot=source_slot, nombre_archivo=nombre_archivo, idioma=idioma
+                    )
+                event.accept()
+        except Exception as e:
+            print(f"Error en BinderSlot dropEvent: {e}")
      
     # Allow dragging FROM the slot too
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.id_api:
-            self.drag_start_position = event.pos()
+        try:
+            if event.button() == Qt.MouseButton.LeftButton and self.id_api:
+                self.drag_start_position = event.pos()
+                self.long_press_timer.start(260)
+        except Exception as e:
+            print(f"Error en BinderSlot mousePressEvent: {e}")
 
     def mouseMoveEvent(self, event):
-        if not self.id_api:
-            return
-        if not (event.buttons() & Qt.MouseButton.LeftButton):
-            return
-        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
-            return
+        try:
+            if not self.id_api:
+                return
+            if not (event.buttons() & Qt.MouseButton.LeftButton):
+                return
+            if getattr(self, 'drag_start_position', None) and (event.pos() - self.drag_start_position).manhattanLength() >= QApplication.startDragDistance():
+                self.long_press_timer.stop()
 
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText(self.id_api)
-        mime_data.setProperty("source", "binder")
-        mime_data.setProperty("source_slot", f"{self.page_index}_{self.slot_index}")
-        mime_data.setProperty("nombre_archivo", self.nombre_archivo)
-        drag.setMimeData(mime_data)
-        
-        if self.pixmap():
-            drag.setPixmap(self.pixmap().scaled(80, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            drag.setHotSpot(event.pos()) # Roughly center?
-        
-        drag.exec(Qt.DropAction.CopyAction)
+                drag = QDrag(self)
+                mime_data = QMimeData()
+                mime_data.setText(self.id_api)
+                mime_data.setProperty("source", "binder")
+                mime_data.setProperty("source_slot", f"{self.page_index}_{self.slot_index}")
+                mime_data.setProperty("nombre_archivo", self.nombre_archivo)
+                mime_data.setProperty("idioma", getattr(self, "idioma", "en") or "en")
+                drag.setMimeData(mime_data)
+                
+                if self.pixmap() and not self.pixmap().isNull():
+                    drag.setPixmap(self.pixmap().scaled(80, 112, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    drag.setHotSpot(event.pos())
+                
+                drag.exec(Qt.DropAction.CopyAction)
+        except Exception as e:
+            print(f"Error en BinderSlot mouseMoveEvent: {e}")
+
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.long_press_timer.isActive():
+                self.long_press_timer.stop()
+                if self.id_api:
+                    self.set_selected(not self.selected)
+        super().mouseReleaseEvent(event)
 
 
 class InventorySidebar(QWidget):
     def __init__(self, usuario, parent=None):
         super().__init__(parent)
         self.usuario = usuario
-        
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Search/Header
-        self.header = QLabel("Mi Colección")
-        self.header.setStyleSheet("font-weight: bold; color: #5a2a3a; font-size: 14px; margin-bottom: 5px;")
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Header Title
+        self.header = QLabel(t("Colección"))
+        self.header.setStyleSheet(
+            "font-weight: bold; color: #5a2a3a; font-size: 15px;"
+            " border: none; background: transparent;"
+        )
         layout.addWidget(self.header)
-        
-        # Scroll Area for cards
+
+        # 1. Buscador (usa clase SearchInput del QSS global)
+        self.buscador = QLineEdit()
+        self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
+        self.buscador.setProperty("class", "SearchInput")
+        self.timer_busqueda = QTimer()
+        self.timer_busqueda.setSingleShot(True)
+        self.timer_busqueda.setInterval(300)
+        self.timer_busqueda.timeout.connect(self.load_cards)
+        self.buscador.textChanged.connect(lambda: self.timer_busqueda.start())
+        layout.addWidget(self.buscador)
+
+        # 2. Botón Filtros (usa clase BinderNavBtn del QSS global)
+        self.btn_toggle_filtros = QPushButton("⚙️ Filtros ▼")
+        self.btn_toggle_filtros.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_filtros.setProperty("class", "BinderNavBtn")
+        self.btn_toggle_filtros.clicked.connect(self.toggle_filters_panel)
+        layout.addWidget(self.btn_toggle_filtros)
+
+        # 3. Panel desplegable de filtros
+        self.filters_panel = QWidget()
+        self.filters_panel.setObjectName("binder_filters_panel")
+        self.filters_panel.setStyleSheet("""
+            QWidget#binder_filters_panel {
+                background-color: #fff0f3;
+                border: 1.5px solid #f2c4ce;
+                border-radius: 10px;
+            }
+            QLabel {
+                font-size: 12px;
+                font-weight: bold;
+                color: #703043;
+                border: none;
+                background: transparent;
+            }
+            QComboBox {
+                background-color: white;
+                border: 1.5px solid #f29ca4;
+                border-radius: 8px;
+                padding: 3px 8px;
+                font-size: 12px;
+                min-height: 30px;
+            }
+        """)
+        self.filters_panel.setVisible(False)
+
+        panel_layout = QVBoxLayout(self.filters_panel)
+        panel_layout.setContentsMargins(10, 10, 10, 10)
+        panel_layout.setSpacing(6)
+
+        self.filtros = {}
+        campos = {
+            "Idioma": "idioma",
+            "Rareza": "rarity",
+            "Tipo": "type",
+            "Edición": "edition",
+            "Etapa": "stage",
+            "Entrenador": "trainer",
+            "Especial": "especial_type"
+        }
+
+        for label_text, col_name in campos.items():
+            lbl = QLabel(label_text)
+            panel_layout.addWidget(lbl)
+            combo = QComboBox()
+            combo.addItem("Todos")
+            self.filtros[col_name] = combo
+            panel_layout.addWidget(combo)
+
+        # Botón Aplicar (usa clase pill del QSS global)
+        self.btn_aplicar_filtros = QPushButton("✅ Aplicar Filtros")
+        self.btn_aplicar_filtros.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_aplicar_filtros.setProperty("class", "pill")
+        self.btn_aplicar_filtros.clicked.connect(self.load_cards)
+        panel_layout.addWidget(self.btn_aplicar_filtros)
+
+        layout.addWidget(self.filters_panel)
+
+        # Scroll Area
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("background-color: #fff7f8; border: none;")
-        
+
         self.container = QWidget()
         self.cards_layout = QVBoxLayout(self.container)
-        self.cards_layout.setSpacing(15)
+        self.cards_layout.setSpacing(12)
         self.cards_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        
+
         self.scroll.setWidget(self.container)
         layout.addWidget(self.scroll)
-        
+
+        self.cargar_opciones_filtros()
         self.load_cards()
-        
+
+    def retranslate_ui(self):
+        self.header.setText(t("Colección"))
+        self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
+        if hasattr(self, 'btn_aplicar_filtros'):
+            self.btn_aplicar_filtros.setText(f"✅ {t('Aplicar')}")
+
+
+    def toggle_filters_panel(self):
+        visible = not self.filters_panel.isVisible()
+        self.filters_panel.setVisible(visible)
+        if visible:
+            self.btn_toggle_filtros.setText("⚙️ Filtros ▲")
+        else:
+            self.btn_toggle_filtros.setText("⚙️ Filtros ▼")
+
+    def cargar_opciones_filtros(self):
+        session = SessionLocal()
+        try:
+            for col_name, combo in self.filtros.items():
+                combo.clear()
+                combo.addItem("Todos")
+                valores = (
+                    session.query(getattr(Cartas, col_name))
+                    .join(UsuarioCarta, Cartas.id_api == UsuarioCarta.carta_id)
+                    .filter(UsuarioCarta.usuario_nombre == self.usuario)
+                    .filter(getattr(Cartas, col_name).isnot(None))
+                    .distinct()
+                    .all()
+                )
+                sorted_vals = sorted(v[0] for v in valores if v[0])
+                for val in sorted_vals:
+                    combo.addItem(val)
+        finally:
+            session.close()
+
+    def _create_card_row_widget(self, id_api, map_idiomas):
+        idiomas_disponibles = list(map_idiomas.keys())
+        if not idiomas_disponibles:
+            return None
+
+        lang_upper_map = {"es": "ES", "en": "EN", "ja": "JA", "fr": "FR", "pt": "PT", "zh": "ZH", "zh-tw": "ZH"}
+        flag_emoji_map = {"es": "🇪🇸", "en": "🇬🇧", "ja": "🇯🇵", "fr": "🇫🇷", "pt": "🇵🇹", "zh": "🇨🇳", "zh-tw": "🇨🇳"}
+
+        item_container = QWidget()
+        item_layout = QHBoxLayout(item_container)
+        item_layout.setContentsMargins(4, 2, 4, 2)
+        item_layout.setSpacing(8)
+
+        lang_badge_btn = QPushButton()
+        lang_badge_btn.setFixedWidth(44)
+        lang_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        first_lang = idiomas_disponibles[0]
+        first_carta = map_idiomas[first_lang]
+        nombre_archivo = first_carta.nombre.lower().replace(" ", "_")
+
+        pixmap = get_webp_pixmap(id_api, first_carta.nombre, first_lang, size=(100, 140))
+        if not pixmap:
+            pixmap = get_pixmap_from_zip(nombre_archivo, size=(100, 140), id_api=id_api)
+        if not pixmap:
+            ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{id_api}.webp")
+            if os.path.exists(ruta_alt):
+                pixmap = QPixmap(ruta_alt)
+
+        card_lbl = DraggableCardLabel(id_api, nombre_archivo, pixmap or QPixmap())
+        card_lbl.idioma = first_lang
+
+        state = {
+            "index": 0,
+            "idiomas": idiomas_disponibles
+        }
+
+        def update_display(idx_val):
+            state["index"] = idx_val
+            current_l = state["idiomas"][idx_val]
+            c_obj = map_idiomas[current_l]
+            n_arch = c_obj.nombre.lower().replace(" ", "_")
+
+            l_upper = lang_upper_map.get(current_l.lower(), current_l.upper())
+            f_emoji = flag_emoji_map.get(current_l.lower(), "🌐")
+
+            if len(state["idiomas"]) > 1:
+                lang_badge_btn.setText(f"{l_upper} 🔄\n{f_emoji}")
+                lang_badge_btn.setToolTip(f"Idioma actual: {l_upper}\n(Haz clic para cambiar entre idiomas en tu colección)")
+            else:
+                lang_badge_btn.setText(f"{l_upper}\n{f_emoji}")
+                lang_badge_btn.setToolTip(f"Idioma disponible: {l_upper}")
+
+            lang_badge_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #f43f5e, stop:1 #e11d48);
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: 11px;
+                    border: 1.5px solid #fda4af;
+                    border-radius: 8px;
+                    padding: 4px 2px;
+                }
+                QPushButton:hover {
+                    background-color: #be123c;
+                    border-color: #ffffff;
+                }
+            """)
+
+            pix = get_webp_pixmap(id_api, c_obj.nombre, current_l, size=(100, 140))
+            if not pix:
+                pix = get_pixmap_from_zip(n_arch, size=(100, 140), id_api=id_api)
+            if not pix:
+                r_alt = os.path.join(IMAGES_DIR, f"{n_arch}_{id_api}.webp")
+                if os.path.exists(r_alt):
+                    pix = QPixmap(r_alt)
+
+            if pix and not pix.isNull():
+                card_lbl.setPixmap(pix)
+
+            card_lbl.idioma = current_l
+            card_lbl.nombre_archivo = n_arch
+            price_val = f"${c_obj.price:.2f}" if (c_obj.price and c_obj.price > 0) else "N/A"
+            card_lbl.setToolTip(f"<b>{c_obj.nombre}</b> [{f_emoji}]<br/>ID: {id_api}<br/>Idioma: {l_upper}<br/>Tipo: {c_obj.type or 'N/A'}<br/>Rareza: {c_obj.rarity or 'N/A'}<br/>Precio: {price_val} USD")
+
+        def cycle_language(checked=False):
+            if len(state["idiomas"]) > 1:
+                next_idx = (state["index"] + 1) % len(state["idiomas"])
+                update_display(next_idx)
+
+        lang_badge_btn.clicked.connect(cycle_language)
+        update_display(0)
+
+        item_layout.addWidget(lang_badge_btn)
+        item_layout.addWidget(card_lbl)
+        return item_container
+
     def load_cards(self):
         session = SessionLocal()
         try:
-            # Query distinct cards owned by user
-            cartas = (
-                session.query(Cartas.nombre, Cartas.id_api)
-                .join(UsuarioCarta)
+            from sqlalchemy import and_, func
+            query = (
+                session.query(Cartas)
+                .join(UsuarioCarta, and_(
+                    Cartas.id_api == UsuarioCarta.carta_id,
+                    func.coalesce(Cartas.idioma, 'es') == func.coalesce(UsuarioCarta.idioma, 'es')
+                ))
                 .filter(UsuarioCarta.usuario_nombre == self.usuario)
-                .group_by(Cartas.id_api) # distinct items
-                .all()
             )
-            
-            # Clear existing
-            for i in reversed(range(self.cards_layout.count())):
-                self.cards_layout.itemAt(i).widget().deleteLater()
-                
-            for nombre, id_api in cartas:
-                nombre_archivo = nombre.lower().replace(" ", "_")
-                pixmap = get_pixmap_from_zip(nombre_archivo, size=(100, 140), id_api=id_api)
-                
-                if not pixmap:
-                     # Fallback if needed, logic from Inventario.py
-                     ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{id_api}.webp")
-                     if os.path.exists(ruta_alt):
-                         pixmap = QPixmap(ruta_alt)
 
-                if pixmap:
-                    card_lbl = DraggableCardLabel(id_api, nombre_archivo, pixmap)
-                    self.cards_layout.addWidget(card_lbl)
+            # 1. Buscar por nombre
+            texto = self.buscador.text().strip().lower()
+            if texto:
+                query = query.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
+
+            # 2. Filtros desplegables
+            for col_name, combo in self.filtros.items():
+                if combo.currentIndex() > 0:
+                    val = combo.currentText()
+                    query = query.filter(getattr(Cartas, col_name) == val)
+
+            todas_cartas = query.all()
+
+            # Agrupar cartas por id_api y registrar idiomas que el usuario realmente posee
+            cartas_por_id = {}
+            for carta in todas_cartas:
+                id_api = carta.id_api
+                card_lang = getattr(carta, 'idioma', 'es') or 'es'
+                if id_api not in cartas_por_id:
+                    cartas_por_id[id_api] = {}
+                cartas_por_id[id_api][card_lang] = carta
+
+            # Limpiar área de cartas
+            for i in reversed(range(self.cards_layout.count())):
+                item = self.cards_layout.itemAt(i)
+                if item and item.widget():
+                    item.widget().deleteLater()
+
+            for id_api, map_idiomas in cartas_por_id.items():
+                item_widget = self._create_card_row_widget(id_api, map_idiomas)
+                if item_widget:
+                    self.cards_layout.addWidget(item_widget)
         finally:
             session.close()
 
     def refresh(self):
+        self.cargar_opciones_filtros()
         self.load_cards()
 
 
@@ -317,45 +726,68 @@ class BinderView(QWidget):
         
         # Header layout for Title and Mode Selector
         header_layout = QHBoxLayout()
-        title = QLabel("Mi Carpeta Física")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
-        header_layout.addWidget(title)
-        
+        self.title_lbl = QLabel(t("Binder"))
+        self.title_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
+        header_layout.addWidget(self.title_lbl)
+
         header_layout.addStretch()
-        
+
         # Mode Selector Buttons
         self.mode_buttons = {}
         mode_container = QWidget()
         mode_btn_layout = QHBoxLayout(mode_container)
-        mode_btn_layout.setContentsMargins(0, 0, 0, 0)
+        mode_btn_layout.setContentsMargins(2, 2, 2, 2)
         mode_btn_layout.setSpacing(6)
-        
+
         for mode in ["2x2", "3x3", "3x4", "4x4"]:
             btn = QPushButton(mode)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("class", "pill selected" if mode == self.current_mode else "pill")
-            btn.setFixedSize(65, 36)
+            btn.setFixedSize(58, 30)
             btn.clicked.connect(lambda checked, m=mode: self.change_mode(m))
             mode_btn_layout.addWidget(btn)
             self.mode_buttons[mode] = btn
-            
+
         header_layout.addWidget(mode_container)
         right_layout.addLayout(header_layout)
-        
+
         # Spread Stack Container (Stacked Widget to allow transition animations)
         self.spread_stack = QStackedWidget()
         right_layout.addWidget(self.spread_stack, 1) # Expand
-        
+
         # References to current visible pages
         self.page_left = None
         self.page_right = None
-        
+
         # Pagination Controls
         controls_layout = QHBoxLayout()
-        self.btn_prev = QPushButton("◀ Anterior")
-        self.btn_next = QPushButton("Siguiente ▶")
-        self.lbl_pages = QLabel("Páginas 1 - 2")
-        
+        self.btn_prev = QPushButton(t("Anterior"))
+        self.btn_next = QPushButton(t("Siguiente"))
+        self.lbl_pages = QLabel(f"{t('Página')} 1 - 2")
+
+        self.btn_quitar = QPushButton("🗑️ Quitar")
+        self.btn_quitar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_quitar.setStyleSheet("""
+            QPushButton {
+                background-color: #ef4444;
+                color: white;
+                font-weight: bold;
+                font-size: 13px;
+                border-radius: 12px;
+                padding: 6px 16px;
+                border: none;
+            }
+            QPushButton:disabled {
+                background-color: #e2e8f0;
+                color: #94a3b8;
+            }
+            QPushButton:hover:enabled {
+                background-color: #dc2626;
+            }
+        """)
+        self.btn_quitar.setEnabled(False)
+        self.btn_quitar.clicked.connect(self.quitar_cartas_seleccionadas)
+
         for btn in [self.btn_prev, self.btn_next]:
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("class", "BinderNavBtn")
@@ -367,6 +799,8 @@ class BinderView(QWidget):
         controls_layout.addWidget(self.btn_prev)
         controls_layout.addWidget(self.lbl_pages)
         controls_layout.addWidget(self.btn_next)
+        controls_layout.addSpacing(24)
+        controls_layout.addWidget(self.btn_quitar)
         controls_layout.addStretch()
         
         right_layout.addLayout(controls_layout)
@@ -375,6 +809,51 @@ class BinderView(QWidget):
         
         # Initialize pages
         self.update_spread(direction=0)
+        language_manager.language_changed.connect(self.retranslate_ui)
+
+    def get_selected_slots(self):
+        selected = []
+        for page_w in [self.page_left, self.page_right]:
+            if page_w and hasattr(page_w, 'slots'):
+                for slot in page_w.slots:
+                    if slot.id_api and slot.selected:
+                        selected.append(slot)
+        return selected
+
+    def update_selection_state(self):
+        selected_slots = self.get_selected_slots()
+        count = len(selected_slots)
+        if count > 0:
+            self.btn_quitar.setText(f"🗑️ Quitar ({count})")
+            self.btn_quitar.setEnabled(True)
+        else:
+            self.btn_quitar.setText("🗑️ Quitar")
+            self.btn_quitar.setEnabled(False)
+
+    def quitar_cartas_seleccionadas(self):
+        selected_slots = self.get_selected_slots()
+        if not selected_slots:
+            return
+
+        for slot in selected_slots:
+            # 1. Eliminar la carta del Binder (solo de la carpeta json, NO de la colección en BD)
+            self.set_card_at(slot.page_index, slot.slot_index, None)
+            # 2. Desactivar selección y limpiar casilla visualmente
+            slot.set_selected(False)
+            slot.clear_card()
+
+        self.update_selection_state()
+
+    def retranslate_ui(self):
+        self.title_lbl.setText(t("Binder"))
+        self.btn_prev.setText(t("Anterior"))
+        self.btn_next.setText(t("Siguiente"))
+        self.btn_quitar.setText("🗑️ Quitar" if not self.get_selected_slots() else f"🗑️ Quitar ({len(self.get_selected_slots())})")
+        p_idx_1 = self.current_spread_index * 2
+        p_idx_2 = p_idx_1 + 1
+        self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
+        if hasattr(self.inventory, 'retranslate_ui'):
+            self.inventory.retranslate_ui()
         
     def load_binder_data(self):
         if os.path.exists(BINDER_DATA_FILE):
@@ -521,30 +1000,32 @@ class BinderView(QWidget):
         eff_old.setOpacity(1.0)
         eff_new.setOpacity(0.0)
         
-        duration = 350
+        duration = 220
         
         # Create animations
         self.anim_opacity_old = QPropertyAnimation(eff_old, b"opacity", self)
         self.anim_opacity_old.setDuration(duration)
         self.anim_opacity_old.setStartValue(1.0)
         self.anim_opacity_old.setEndValue(0.0)
+        self.anim_opacity_old.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         self.anim_opacity_new = QPropertyAnimation(eff_new, b"opacity", self)
         self.anim_opacity_new.setDuration(duration)
         self.anim_opacity_new.setStartValue(0.0)
         self.anim_opacity_new.setEndValue(1.0)
+        self.anim_opacity_new.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         self.anim_geom_old = QPropertyAnimation(current_spread, b"geometry", self)
         self.anim_geom_old.setDuration(duration)
         self.anim_geom_old.setStartValue(normal_rect)
         self.anim_geom_old.setEndValue(shrink_rect)
-        self.anim_geom_old.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.anim_geom_old.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         self.anim_geom_new = QPropertyAnimation(new_spread, b"geometry", self)
         self.anim_geom_new.setDuration(duration)
         self.anim_geom_new.setStartValue(grow_start_rect)
         self.anim_geom_new.setEndValue(normal_rect)
-        self.anim_geom_new.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.anim_geom_new.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         # Start animations
         self.anim_opacity_old.start()
@@ -629,7 +1110,7 @@ class BinderView(QWidget):
         # UI controls update
         p_idx_1 = self.current_spread_index * 2
         p_idx_2 = p_idx_1 + 1
-        self.lbl_pages.setText(f"Páginas {p_idx_1 + 1} - {p_idx_2 + 1}")
+        self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
         self.btn_prev.setEnabled(self.current_spread_index > 0)
         self.btn_next.setEnabled(True)
         
@@ -682,16 +1163,16 @@ class BinderView(QWidget):
         
         # Create animations
         self.anim_old = QPropertyAnimation(current_spread, b"pos", self)
-        self.anim_old.setDuration(400)
+        self.anim_old.setDuration(220)
         self.anim_old.setStartValue(current_spread.pos())
         self.anim_old.setEndValue(QPoint(-direction * width, 0))
-        self.anim_old.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.anim_old.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         self.anim_new = QPropertyAnimation(new_spread, b"pos", self)
-        self.anim_new.setDuration(400)
+        self.anim_new.setDuration(220)
         self.anim_new.setStartValue(new_spread.pos())
         self.anim_new.setEndValue(QPoint(0, 0))
-        self.anim_new.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.anim_new.setEasingCurve(QEasingCurve.Type.OutCubic)
         
         # Start animations
         self.anim_old.start()
@@ -715,26 +1196,76 @@ class BinderView(QWidget):
             cfg = BINDER_MODES[target_mode]
             slots_per_page = cfg["rows"] * cfg["cols"]
             for i in range(slots_per_page):
-                card_id = self.get_card_at(page_idx, i, target_mode)
+                card_info = self.get_card_at(page_idx, i, target_mode)
                 slot = page_widget.get_slot(i)
-                if card_id and slot:
-                     # Fetch card name to get image
-                     carta = session.query(Cartas).filter(Cartas.id_api == card_id).first()
-                     if carta:
-                          nombre_archivo = carta.nombre.lower().replace(" ", "_")
-                          pixmap = get_pixmap_from_zip(nombre_archivo, size=(cfg["card_w"], cfg["card_h"]), id_api=card_id)
-                          if not pixmap:
-                              # fallback
-                              ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{card_id}.webp")
-                              if os.path.exists(ruta_alt):
-                                  pixmap = QPixmap(ruta_alt)
-                          
-                          if pixmap:
-                              slot.set_card(card_id, nombre_archivo, pixmap)
+                if card_info and slot:
+                    card_id = None
+                    card_lang = "en"
+                    card_var = "Normal"
+                    if isinstance(card_info, dict):
+                        card_id = card_info.get("id_api")
+                        card_lang = card_info.get("idioma", "en")
+                        card_var = card_info.get("variante", "Normal")
+                    elif isinstance(card_info, str):
+                        if ":" in card_info:
+                            card_id, card_lang = card_info.split(":", 1)
+                        else:
+                            card_id = card_info
+
+                    if card_id:
+                        carta = session.query(Cartas).filter(Cartas.id_api == card_id, Cartas.idioma == card_lang).first()
+                        if not carta:
+                            carta = session.query(Cartas).filter(Cartas.id_api == card_id).first()
+
+                        if carta:
+                            c_lang = carta.idioma or card_lang
+                            nombre = carta.nombre
+                            nombre_archivo = nombre.lower().replace(" ", "_")
+
+                            pixmap = get_webp_pixmap(card_id, nombre, c_lang, size=(cfg["card_w"], cfg["card_h"]))
+                            if not pixmap:
+                                pixmap = get_pixmap_from_zip(nombre_archivo, size=(cfg["card_w"], cfg["card_h"]), id_api=card_id)
+                            if not pixmap:
+                                ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{card_id}.webp")
+                                if os.path.exists(ruta_alt):
+                                    pixmap = QPixmap(ruta_alt)
+
+                            if pixmap:
+                                slot.set_card(card_id, nombre_archivo, pixmap, idioma=c_lang, variante=card_var)
         finally:
             session.close()
 
-    def handle_drop(self, page_idx, slot_idx, card_id, source_slot=None, nombre_archivo=None):
+    def update_slot_variant(self, page, slot, nueva_variante):
+        target_mode = self.current_mode
+        if self.usuario not in self.binder_data:
+            self.binder_data[self.usuario] = {}
+        if target_mode not in self.binder_data[self.usuario]:
+            self.binder_data[self.usuario][target_mode] = {}
+        
+        key = f"{page}_{slot}"
+        existing = self.binder_data[self.usuario][target_mode].get(key)
+        
+        if isinstance(existing, dict):
+            existing["variante"] = nueva_variante
+            self.binder_data[self.usuario][target_mode][key] = existing
+        elif isinstance(existing, str):
+            self.binder_data[self.usuario][target_mode][key] = {
+                "id_api": existing,
+                "variante": nueva_variante
+            }
+        else:
+            return
+
+        self.save_binder_data()
+        show_toast(f"Variante en Binder guardada: {nueva_variante}", "info")
+
+
+    def handle_drop(self, page_idx, slot_idx, card_id, source_slot=None, nombre_archivo=None, idioma=None, variante="Normal"):
+        if not idioma:
+            idioma = "en"
+
+        card_data_entry = {"id_api": card_id, "idioma": idioma, "variante": variante or "Normal"}
+
         # If the drag came from another slot in the binder
         if source_slot:
             try:
@@ -762,7 +1293,7 @@ class BinderView(QWidget):
                 print(f"Error resolving source slot during move: {e}")
 
         # Update data
-        self.set_card_at(page_idx, slot_idx, card_id)
+        self.set_card_at(page_idx, slot_idx, card_data_entry)
         
         # Find the specific slot widget
         target_page_widget = None
@@ -774,30 +1305,27 @@ class BinderView(QWidget):
         if target_page_widget:
             slot = target_page_widget.get_slot(slot_idx)
             if slot:
-                if nombre_archivo:
-                    cfg = BINDER_MODES[self.current_mode]
-                    pixmap = get_pixmap_from_zip(nombre_archivo, size=(cfg["card_w"], cfg["card_h"]), id_api=card_id)
-                    if not pixmap:
-                        ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{card_id}.webp")
-                        if os.path.exists(ruta_alt):
-                            pixmap = QPixmap(ruta_alt)
-                    slot.set_card(card_id, nombre_archivo, pixmap)
-                else:
-                    # Fallback database query with correct session close
-                    session = SessionLocal()
-                    try:
+                cfg = BINDER_MODES[self.current_mode]
+                session = SessionLocal()
+                try:
+                    carta = session.query(Cartas).filter(Cartas.id_api == card_id, Cartas.idioma == idioma).first()
+                    if not carta:
                         carta = session.query(Cartas).filter(Cartas.id_api == card_id).first()
-                        if carta:
-                            n_archivo = carta.nombre.lower().replace(" ", "_")
-                            cfg = BINDER_MODES[self.current_mode]
+
+                    if carta:
+                        n_archivo = carta.nombre.lower().replace(" ", "_")
+                        c_lang = carta.idioma or idioma
+                        pixmap = get_webp_pixmap(card_id, carta.nombre, c_lang, size=(cfg["card_w"], cfg["card_h"]))
+                        if not pixmap:
                             pixmap = get_pixmap_from_zip(n_archivo, size=(cfg["card_w"], cfg["card_h"]), id_api=card_id)
-                            if not pixmap:
-                                ruta_alt = os.path.join(IMAGES_DIR, f"{n_archivo}_{card_id}.webp")
-                                if os.path.exists(ruta_alt):
-                                    pixmap = QPixmap(ruta_alt)
-                            slot.set_card(card_id, n_archivo, pixmap)
-                    finally:
-                        session.close()
+                        if not pixmap:
+                            ruta_alt = os.path.join(IMAGES_DIR, f"{n_archivo}_{card_id}.webp")
+                            if os.path.exists(ruta_alt):
+                                pixmap = QPixmap(ruta_alt)
+                        slot.set_card(card_id, n_archivo, pixmap, idioma=c_lang, variante=variante)
+                finally:
+                    session.close()
+
 
     def prev_spread(self):
         if self.current_spread_index > 0:

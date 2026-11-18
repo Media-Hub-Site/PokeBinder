@@ -119,19 +119,19 @@ class AppWindow(QWidget):
         self.flash_overlay.show()
         self.flash_overlay.raise_()
 
-        # Animación de Entrada (Fade in a blanco)
+        # Animación de Entrada (Fade in suave)
         self.anim_in = QPropertyAnimation(self.flash_opacity, b"opacity")
-        self.anim_in.setDuration(350)
+        self.anim_in.setDuration(200)
         self.anim_in.setStartValue(0.0)
         self.anim_in.setEndValue(1.0)
-        self.anim_in.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        # Animación de Salida (Fade out de blanco)
+        # Animación de Salida (Fade out suave)
         self.anim_out = QPropertyAnimation(self.flash_opacity, b"opacity")
-        self.anim_out.setDuration(450)
+        self.anim_out.setDuration(200)
         self.anim_out.setStartValue(1.0)
         self.anim_out.setEndValue(0.0)
-        self.anim_out.setEasingCurve(QEasingCurve.Type.InQuad)
+        self.anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         # Grupo paralelo para la entrada y cambio de tamaño
         grupo_in = QParallelAnimationGroup(self)
@@ -144,7 +144,7 @@ class AppWindow(QWidget):
             self._end_h = target_h
             
             self.anim_geom = QPropertyAnimation(self, b"windowProgress")
-            self.anim_geom.setDuration(500)
+            self.anim_geom.setDuration(240)
             self.anim_geom.setStartValue(0.0)
             self.anim_geom.setEndValue(1.0)
             self.anim_geom.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -181,18 +181,71 @@ class AppWindow(QWidget):
         grupo_in.start()
 
 
+from MyQtApp.ui.toast import init_global_toast, install_global_exception_hook
+
+def ensure_db_schema_up_to_date():
+    import sqlite3
+    from MyQtApp.config import DB_PATH
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(usuario_carta)")
+            cols = [row[1] for row in cur.fetchall()]
+            if "variante" not in cols:
+                cur.execute("ALTER TABLE usuario_carta ADD COLUMN variante VARCHAR DEFAULT 'Normal'")
+            if "idioma" not in cols:
+                cur.execute("ALTER TABLE usuario_carta ADD COLUMN idioma VARCHAR DEFAULT 'es'")
+            
+            cur.execute("PRAGMA table_info(Cartas)")
+            cols_cartas = [row[1] for row in cur.fetchall()]
+            if "variantes_disponibles" not in cols_cartas:
+                cur.execute("ALTER TABLE Cartas ADD COLUMN variantes_disponibles VARCHAR DEFAULT 'normal,reverse,holo'")
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"Error asegurando esquema DB: {e}")
+
 def main():
+    install_global_exception_hook()
+
+    # Soporte para inyección de idioma desde Launcher (--lang=es/en) o variable de entorno
+    lang_arg = os.environ.get("MEDIAHUB_APP_LANG", "")
+    for arg in sys.argv[1:]:
+        if arg.startswith("--lang="):
+            lang_arg = arg.split("=", 1)[1].strip()
+    
+    if lang_arg:
+        from MyQtApp.i18n import language_manager
+        lang_map = {
+            "es": "Español", "en": "English", "ja": "日本語", "fr": "Français", "pt": "Português"
+        }
+        chosen = lang_map.get(lang_arg.lower(), "Español")
+        language_manager.set_language(chosen)
+
     app = QApplication(sys.argv)
 
     # Inicializar Base de datos
     Base.metadata.create_all(bind=engine)
+    ensure_db_schema_up_to_date()
+
+    # Generar respaldo de seguridad preventivo al iniciar
+    try:
+        from MyQtApp.app.backup import create_database_backup
+        create_database_backup(tag="auto")
+    except Exception as e:
+        print(f"Error generando respaldo automático de inicio: {e}")
 
     # Cargar Estilos Globales
     apply_global_style(app)
 
     window = AppWindow()
+    init_global_toast(window)
     window.show()
     sys.exit(app.exec())
+
+
 
 
 if __name__ == "__main__":

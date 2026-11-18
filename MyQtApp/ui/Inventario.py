@@ -1,158 +1,118 @@
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QScrollArea, QGridLayout,
-    QHBoxLayout, QLineEdit, QComboBox, QPushButton, QGraphicsOpacityEffect
+    QHBoxLayout, QLineEdit, QComboBox, QPushButton, QGraphicsOpacityEffect,
+    QSizePolicy
 )
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl, QEasingCurve
 from PyQt6.QtMultimedia import QSoundEffect
 import os
 
 from ..session import SessionLocal
 from ..models import Cartas, UsuarioCarta
-from ..app.getImgs import get_pixmap_from_zip
+from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap
+from MyQtApp.ui.CardWidget import ClickableLabel, CardItemWidget, VariantLegendBar
+from MyQtApp.ui.toast import show_toast
 from sqlalchemy import func, and_
-
-
-class ClickableLabel(QLabel):
-    clicked = pyqtSignal(object)
-
-    def __init__(self, id_carta, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.id_carta = id_carta
-        self.seleccionada = False
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.ejecutar_animacion_burbuja()
-        self.clicked.emit(self.id_carta)
-
-    def ejecutar_animacion_burbuja(self):
-        parent = self.window()
-        if not parent:
-            return
-
-        from PyQt6.QtWidgets import QWidget, QGraphicsOpacityEffect
-        from PyQt6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QPoint, QRect, QEasingCurve
-
-        burbuja = QWidget(parent)
-        # Burbuja circular con degradado brillante y bordes redondos dinámicos
-        burbuja.setStyleSheet("""
-            background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
-                stop:0 rgba(255, 255, 255, 220),
-                stop:0.5 rgba(243, 200, 209, 130),
-                stop:0.8 rgba(255, 182, 193, 60),
-                stop:1 rgba(255, 255, 255, 0));
-            border: 2px solid rgba(255, 255, 255, 200);
-            border-radius: 999px;
-        """)
-
-        # Posición global del Label
-        pos_global = self.mapTo(parent, QPoint(0, 0))
-        w = self.width()
-        h = self.height()
-        centro = QPoint(pos_global.x() + w // 2, pos_global.y() + h // 2)
-
-        # Dimensiones iniciales
-        tam_inicial = 8
-        r_inicial = QRect(centro.x() - tam_inicial // 2, centro.y() - tam_inicial // 2, tam_inicial, tam_inicial)
-        burbuja.setGeometry(r_inicial)
-        burbuja.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        burbuja.show()
-
-        # Efecto de opacidad
-        opacidad = QGraphicsOpacityEffect(burbuja)
-        burbuja.setGraphicsEffect(opacidad)
-
-        # Animación de escala (crecimiento)
-        tam_final = max(w, h) + 30
-        r_final = QRect(centro.x() - tam_final // 2, centro.y() - tam_final // 2, tam_final, tam_final)
-
-        anim_geom = QPropertyAnimation(burbuja, b"geometry", self)
-        anim_geom.setDuration(350)
-        anim_geom.setStartValue(r_inicial)
-        anim_geom.setEndValue(r_final)
-        anim_geom.setEasingCurve(QEasingCurve.Type.OutQuad)
-
-        # Animación de desvanecimiento
-        anim_opac = QPropertyAnimation(opacidad, b"opacity", self)
-        anim_opac.setDuration(350)
-        anim_opac.setStartValue(1.0)
-        anim_opac.setEndValue(0.0)
-        anim_opac.setEasingCurve(QEasingCurve.Type.InQuad)
-
-        # Grupo paralelo
-        grupo = QParallelAnimationGroup(self)
-        grupo.addAnimation(anim_geom)
-        grupo.addAnimation(anim_opac)
-
-        # Evitar recolección de basura
-        if not hasattr(self, '_burbujas_activas'):
-            self._burbujas_activas = []
-        item_ref = (burbuja, opacidad, grupo)
-        self._burbujas_activas.append(item_ref)
-
-        def limpiar():
-            burbuja.deleteLater()
-            if item_ref in self._burbujas_activas:
-                self._burbujas_activas.remove(item_ref)
-
-        grupo.finished.connect(limpiar)
-        grupo.start()
-
-
 from MyQtApp.config import SOUNDS_DIR
+from MyQtApp.i18n import t, language_manager
+
 
 class GaleriaCartasInventario(QWidget):
     CARTAS_POR_PAGINA = 30
 
     def __init__(self, path_imagenes, nombre_usuario):
         super().__init__()
-        self.path_imagenes = path_imagenes
         self.nombre_usuario = nombre_usuario
+        self.path_imagenes = path_imagenes
+        self.session = SessionLocal()
         self.labels_por_id = {}
         self.cartas_seleccionadas = set()
         self.current_page = 0
         self.total_cartas = 0
 
-        self.session = SessionLocal()
-
-        # UI --- (NO CAMBIÓ)
         self.main_layout = QVBoxLayout(self)
-        header_layout = QHBoxLayout()
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(10)
+
+        header_vbox = QVBoxLayout()
+        header_vbox.setSpacing(8)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
         self.buscador = QLineEdit()
+        self.buscador.setPlaceholderText(t("BuscadorPlaceholder"))
         self.buscador.setProperty("class", "SearchInput")
-        self.buscador.setPlaceholderText("🔍 Buscar carta por nombre...")
+        row1.addWidget(self.buscador)
+
         self.timer_busqueda = QTimer()
         self.timer_busqueda.setSingleShot(True)
         self.timer_busqueda.timeout.connect(self.reset_page_and_actualizar)
         self.buscador.textChanged.connect(self.on_text_changed)
-        header_layout.addWidget(self.buscador)
+
+        self.btn_limpiar = QPushButton(t("Limpiar Filtros"))
+        self.btn_limpiar.setProperty("class", "CleanBtn")
+        self.btn_limpiar.clicked.connect(self.limpiar_filtros)
+        row1.addWidget(self.btn_limpiar)
+
+        self.lbl_valor_total = QLabel(f"{t('Valor Inventario')} $0.00 USD")
+        self.lbl_valor_total.setProperty("class", "ValorTotalLabel")
+        row1.addWidget(self.lbl_valor_total)
+
+        self.btn_sync_precios = QPushButton(t("Precios Real-Time"))
+        self.btn_sync_precios.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sync_precios.setProperty("class", "SyncBtn")
+        self.btn_sync_precios.clicked.connect(self.iniciar_sincronizacion_precios)
+        row1.addWidget(self.btn_sync_precios)
+
+        header_vbox.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
 
         self.filtros = {}
         campos = {
-            "rareza": "rarity",
-            "tipo": "type",
-            "edición": "edition",
-            "etapa": "stage",
-            "entrenador": "trainer",
-            "especial": "especial_type"
+            "Rareza": "rarity",
+            "Tipo": "type",
+            "Edición": "edition",
+            "Etapa": "stage",
+            "Entrenador": "trainer",
+            "Especial": "especial_type"
         }
 
         for etiqueta, columna in campos.items():
             combo = QComboBox()
-            combo.addItem("Todos")
-            combo.setFixedWidth(130)
+            combo.addItem(f"{t(etiqueta)}: {t('Todos')}")
             combo.setProperty("class", "FilterCombo")
             combo.currentIndexChanged.connect(self.reset_page_and_actualizar)
             self.filtros[columna] = combo
-            header_layout.addWidget(combo)
+            row2.addWidget(combo, stretch=1)
 
-        header_layout.addStretch()
-        self.main_layout.addLayout(header_layout)
+        # Filtro de Idioma
+        self.combo_idioma = QComboBox()
+        self.combo_idioma.setProperty("class", "FilterCombo")
+        self.combo_idioma.addItem(f"{t('Idioma')}: {t('Todos')}", None)
+        self.combo_idioma.addItem("Español 🇪🇸", "es")
+        self.combo_idioma.addItem("English 🇬🇧", "en")
+        self.combo_idioma.addItem("日本語 🇯🇵", "ja")
+        self.combo_idioma.addItem("Français 🇫🇷", "fr")
+        self.combo_idioma.addItem("Português 🇵🇹", "pt")
+        self.combo_idioma.addItem("繁體中文 🇨🇳", "zh")
+        self.combo_idioma.currentIndexChanged.connect(self.reset_page_and_actualizar)
+        row2.addWidget(self.combo_idioma, stretch=1)
+
+        header_vbox.addLayout(row2)
+        self.main_layout.addLayout(header_vbox)
 
         self.scroll = QScrollArea()
+
+
         self.scroll.setWidgetResizable(True)
-        self.scroll.setFixedHeight(460)
+        self.scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding
+        )
 
         self.container = QWidget()
         self.container.setObjectName("InventarioContainer")
@@ -160,15 +120,10 @@ class GaleriaCartasInventario(QWidget):
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
 
-        self.opacity_effect = QGraphicsOpacityEffect()
-        self.container.setGraphicsEffect(self.opacity_effect)
-        self.animacion = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.animacion.setDuration(250)
-
         paginacion_layout = QHBoxLayout()
-        self.btn_anterior = QPushButton("⬅ Anterior")
+        self.btn_anterior = QPushButton(t("Anterior"))
         self.btn_anterior.setProperty("class", "PaginationBtn")
-        self.btn_siguiente = QPushButton("Siguiente ➡")
+        self.btn_siguiente = QPushButton(t("Siguiente"))
         self.btn_siguiente.setProperty("class", "PaginationBtn")
         self.lbl_pagina = QLabel("")
         self.lbl_pagina.setProperty("class", "PaginationLabel")
@@ -186,6 +141,7 @@ class GaleriaCartasInventario(QWidget):
 
         self.cargar_filtros()
         self.actualizar_total_cartas()
+        self.actualizar_valor_total()
         self.actualizar_galeria()
 
 
@@ -202,6 +158,23 @@ class GaleriaCartasInventario(QWidget):
             for val in valores:
                 combo.addItem(val)
 
+    def limpiar_filtros(self):
+        self.buscador.blockSignals(True)
+        self.buscador.clear()
+        self.buscador.blockSignals(False)
+
+        for combo in self.filtros.values():
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+
+        if hasattr(self, 'combo_idioma'):
+            self.combo_idioma.blockSignals(True)
+            self.combo_idioma.setCurrentIndex(0)
+            self.combo_idioma.blockSignals(False)
+
+        self.reset_page_and_actualizar()
+
     def on_text_changed(self):
         self.timer_busqueda.start(300)
 
@@ -210,40 +183,43 @@ class GaleriaCartasInventario(QWidget):
         self.actualizar_total_cartas()
         self.actualizar_con_transicion()
 
+    def _get_filter_value(self, combo):
+        if combo.currentIndex() <= 0:
+            return None
+        return combo.currentText().strip()
+
     # ✅ SQLAlchemy conteo
     def actualizar_total_cartas(self):
         q = self.session.query(func.count(Cartas.id_api)).join(UsuarioCarta).filter(
             UsuarioCarta.usuario_nombre == self.nombre_usuario
         )
 
+        selected_lang = self.combo_idioma.currentData()
+        if selected_lang:
+            q = q.filter(Cartas.idioma == selected_lang)
+
         texto = self.buscador.text().lower().strip()
         if texto:
             q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
 
         for columna, combo in self.filtros.items():
-            if combo.currentText() != "Todos":
-                q = q.filter(getattr(Cartas, columna) == combo.currentText())
+            if val := self._get_filter_value(combo):
+                q = q.filter(getattr(Cartas, columna) == val)
 
         self.total_cartas = q.scalar()
 
     def actualizar_con_transicion(self):
-        self.animacion.setStartValue(1.0)
-        self.animacion.setEndValue(0.0)
-        self.animacion.finished.connect(self._actualizar_y_fade_in)
-        self.animacion.start()
-
-    def _actualizar_y_fade_in(self):
         self.actualizar_galeria()
-        self.animacion.finished.disconnect()
-        self.animacion.setStartValue(0.0)
-        self.animacion.setEndValue(1.0)
-        self.animacion.start()
+        self.container.update()
+        self.scroll.viewport().update()
 
     # ✅ SQLAlchemy mostrar cartas
     def actualizar_galeria(self):
-        for i in reversed(range(self.grid.count())):
-            widget = self.grid.itemAt(i).widget()
-            widget.deleteLater()
+        # Limpiar sincrónicamente la estructura de la cuadrícula
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
 
         texto = self.buscador.text().lower().strip()
 
@@ -258,67 +234,110 @@ class GaleriaCartasInventario(QWidget):
         else: # Normal
             size = (120, 170)
 
-        q = self.session.query(Cartas.nombre, Cartas.id_api).join(UsuarioCarta).filter(
+        q = self.session.query(Cartas, UsuarioCarta.variante).join(
+            UsuarioCarta,
+            and_(
+                Cartas.id_api == UsuarioCarta.carta_id,
+                func.coalesce(Cartas.idioma, 'es') == func.coalesce(UsuarioCarta.idioma, 'es')
+            )
+        ).filter(
             UsuarioCarta.usuario_nombre == self.nombre_usuario
         )
+
+        selected_lang = self.combo_idioma.currentData()
+        if selected_lang:
+            q = q.filter(Cartas.idioma == selected_lang)
 
         if texto:
             q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
 
         for columna, combo in self.filtros.items():
-            if combo.currentText() != "Todos":
-                q = q.filter(getattr(Cartas, columna) == combo.currentText())
+            if val := self._get_filter_value(combo):
+                q = q.filter(getattr(Cartas, columna) == val)
 
         q = q.limit(self.CARTAS_POR_PAGINA).offset(self.current_page * self.CARTAS_POR_PAGINA)
-        cartas = q.all()
+        cartas_tuples = q.all()
 
         row, col = 0, 0
         self.labels_por_id.clear()
 
-        for nombre, id_api in cartas:
+        for carta, variante_db in cartas_tuples:
+            nombre = carta.nombre
+            id_api = carta.id_api
+            card_lang = carta.idioma or language_manager.current_language
+            card_key = f"{id_api}:{card_lang}"
             nombre_archivo = nombre.lower().replace(" ", "_")
-            print(f"\nIntentando cargar imagen para carta: {nombre} (ID: {id_api})")
             
-            # Intentar cargar usando el nombre y el ID
-            pixmap = get_pixmap_from_zip(nombre_archivo, size=size, id_api=id_api)
+            # 1. Intentar cargar versión .webp por idioma de la carta
+            pixmap = get_webp_pixmap(id_api, nombre, card_lang, size=size)
+            if not pixmap:
+                pixmap = get_pixmap_from_zip(nombre_archivo, size=size, id_api=id_api)
             
             # Si no se encontró con get_pixmap_from_zip, intentar ruta alternativa
             if not pixmap:
                 ruta_alt = os.path.join(self.path_imagenes, f"{nombre_archivo}_{id_api}.webp")
-                print(f"Intentando ruta alternativa: {ruta_alt}")
                 if os.path.exists(ruta_alt):
-                    print("✅ Imagen encontrada en ruta alternativa")
-                    pixmap = QPixmap(ruta_alt).scaled(size[0], size[1], Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pixmap = QPixmap(ruta_alt).scaled(size[0], size[1], Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
             if not pixmap:
-                print("❌ No se pudo cargar ninguna imagen")
                 continue
 
-            print(f"Dimensiones del pixmap: {pixmap.width()}x{pixmap.height()}")
-            
-            label = ClickableLabel(id_api)
-            label.setPixmap(pixmap)
-            label.setMinimumSize(size[0], size[1])  # Asegurar tamaño mínimo
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_widget = CardItemWidget(carta, pixmap, size, variante=variante_db or "Normal")
+            card_widget.image_label.card_key = card_key
+            card_widget.image_label.clicked.connect(self.seleccionar_carta)
+            card_widget.variant_badge.variant_changed.connect(self.cambiar_variante_carta)
 
-            if id_api in self.cartas_seleccionadas:
-                label.setStyleSheet("padding: 5px; border: 2px solid #00cccc; background-color: rgba(0,255,200,80);")
+            if card_key in self.cartas_seleccionadas:
+                card_widget.image_label.setStyleSheet("border: 2.5px solid #00cccc; border-radius: 6px; background-color: rgba(0, 255, 200, 0.25);")
             else:
-                label.setStyleSheet("padding: 5px; border: 2px solid transparent;")
+                card_widget.image_label.setStyleSheet("border: none; background-color: transparent;")
 
-            label.clicked.connect(self.seleccionar_carta)
-            self.labels_por_id[id_api] = label
-            self.grid.addWidget(label, row, col)
+            self.labels_por_id.setdefault(card_key, []).append(card_widget.image_label)
+            self.grid.addWidget(card_widget, row, col)
 
             col += 1
             if col == 5:
                 col = 0
                 row += 1
 
+    def cambiar_variante_carta(self, id_api, nueva_variante):
+        try:
+            rel = self.session.query(UsuarioCarta).filter(
+                UsuarioCarta.usuario_nombre == self.nombre_usuario,
+                UsuarioCarta.carta_id == id_api
+            ).first()
+            if rel:
+                rel.variante = nueva_variante
+                self.session.commit()
+                show_toast(f"Variante actualizada: {nueva_variante}", "info")
+
+        except Exception as e:
+            print(f"Error cambiando variante en BD: {e}")
+
+
         total_pages = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
-        self.lbl_pagina.setText(f"Página {self.current_page + 1} de {total_pages}")
+        self.lbl_pagina.setText(f"{t('Página')} {self.current_page + 1} {t('de')} {total_pages}")
         self.btn_anterior.setEnabled(self.current_page > 0)
         self.btn_siguiente.setEnabled(self.current_page < total_pages - 1)
+
+        language_manager.language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self):
+        self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
+        self.btn_sync_precios.setText(t("Precios Real-Time"))
+        self.btn_anterior.setText(t("Anterior"))
+        self.btn_siguiente.setText(t("Siguiente"))
+        total_pages = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
+        self.lbl_pagina.setText(f"{t('Página')} {self.current_page + 1} {t('de')} {total_pages}")
+        self.actualizar_valor_total()
+
+        campos_labels = [("Rareza", "rarity"), ("Tipo", "type"), ("Edición", "edition"),
+                         ("Etapa", "stage"), ("Entrenador", "trainer"), ("Especial", "especial_type")]
+        for etiqueta, columna in campos_labels:
+            if columna in self.filtros:
+                cb = self.filtros[columna]
+                if cb.count() > 0:
+                    cb.setItemText(0, f"{t(etiqueta)}: {t('Todos')}")
 
     def pagina_anterior(self):
         if self.current_page > 0:
@@ -341,26 +360,88 @@ class GaleriaCartasInventario(QWidget):
             self.sonido_pagina.setVolume(vol)
             self.sonido_pagina.play()
 
-    def seleccionar_carta(self, id_carta):
-        label = self.labels_por_id.get(id_carta)
-        if not label:
-            return
+    def seleccionar_carta(self, label_obj, id_carta):
+        card_key = getattr(label_obj, 'card_key', None) or id_carta
 
-        if id_carta in self.cartas_seleccionadas:
-            self.cartas_seleccionadas.remove(id_carta)
-            label.setStyleSheet("padding: 5px; border: 2px solid transparent; background-color: transparent;")
+        if card_key in self.cartas_seleccionadas:
+            self.cartas_seleccionadas.remove(card_key)
+            style = "border: none; background-color: transparent;"
         else:
-            self.cartas_seleccionadas.add(id_carta)
-            label.setStyleSheet("padding: 5px; border: 2px solid #00cccc; background-color: rgba(0,255,200,80);")
+            self.cartas_seleccionadas.add(card_key)
+            style = "border: 2.5px solid #00cccc; border-radius: 6px; background-color: rgba(0, 255, 200, 0.25);"
+
+        labels = self.labels_por_id.get(card_key, [])
+        if isinstance(labels, list):
+            if label_obj and label_obj not in labels:
+                labels.append(label_obj)
+            for lbl in labels:
+                lbl.setStyleSheet(style)
+        elif label_obj:
+            label_obj.setStyleSheet(style)
 
     def get_cartas_seleccionadas(self):
         if not self.cartas_seleccionadas:
             return []
 
-        filas = (
-            self.session.query(Cartas.id_api, Cartas.nombre)
-            .filter(Cartas.id_api.in_(self.cartas_seleccionadas))
-            .all()
-        )
+        resultado = []
+        for key in self.cartas_seleccionadas:
+            if ":" in key:
+                id_api, lang = key.split(":", 1)
+            else:
+                id_api, lang = key, language_manager.current_language
 
-        return [{"id_api": f[0], "nombre": f[1]} for f in filas]
+            c = self.session.query(Cartas.id_api, Cartas.nombre, Cartas.idioma)\
+                .filter(Cartas.id_api == id_api, Cartas.idioma == lang).first()
+            if not c:
+                c = self.session.query(Cartas.id_api, Cartas.nombre, Cartas.idioma)\
+                    .filter(Cartas.id_api == id_api).first()
+
+            if c:
+                resultado.append({"id_api": c[0], "nombre": c[1], "idioma": c[2]})
+
+        return resultado
+
+    def limpiar_seleccion(self):
+        self.cartas_seleccionadas.clear()
+        for key, labels in self.labels_por_id.items():
+            if isinstance(labels, list):
+                for lbl in labels:
+                    lbl.setStyleSheet("border: none; background-color: transparent;")
+            elif labels:
+                labels.setStyleSheet("border: none; background-color: transparent;")
+
+    def iniciar_sincronizacion_precios(self):
+        from MyQtApp.app.price_updater import PriceUpdaterThread
+
+        cartas_usuario = self.session.query(Cartas.id_api).join(UsuarioCarta).filter(
+            UsuarioCarta.usuario_nombre == self.nombre_usuario
+        ).all()
+
+        id_list = [c[0] for c in cartas_usuario if c[0]]
+        if not id_list:
+            return
+
+        self.btn_sync_precios.setEnabled(False)
+        self.btn_sync_precios.setText("🔄 Conectando...")
+
+        self.price_thread = PriceUpdaterThread(id_list, parent=self)
+        self.price_thread.progress.connect(self.on_precio_progreso)
+        self.price_thread.finished.connect(self.on_precio_finalizado)
+        self.price_thread.start()
+
+    def on_precio_progreso(self, actual, total):
+        self.btn_sync_precios.setText(f"🔄 Cargando ({actual}/{total})...")
+
+    def on_precio_finalizado(self, actualizadas):
+        self.btn_sync_precios.setEnabled(True)
+        self.btn_sync_precios.setText("🔄 Precios Real-Time")
+        self.actualizar_valor_total()
+        self.actualizar_galeria()
+
+    def actualizar_valor_total(self):
+        res = self.session.query(func.sum(Cartas.price)).join(UsuarioCarta).filter(
+            UsuarioCarta.usuario_nombre == self.nombre_usuario,
+            Cartas.price > 0
+        ).scalar()
+        total_val = float(res) if res else 0.0
+        self.lbl_valor_total.setText(f"{t('Valor Inventario')} ${total_val:,.2f} USD")

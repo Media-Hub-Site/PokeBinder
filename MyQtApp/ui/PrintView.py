@@ -1,0 +1,635 @@
+import os
+import re
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
+    QPushButton, QSpinBox, QCheckBox, QScrollArea, QGridLayout, QFrame,
+    QFileDialog, QDialog, QTextEdit, QDialogButtonBox, QMessageBox, QListWidget, QListWidgetItem
+)
+from PyQt6.QtGui import QPixmap, QPdfWriter, QPainter, QPageSize, QPageLayout, QPen, QColor, QFont
+from PyQt6.QtCore import Qt, QMarginsF, QRectF, QSizeF, pyqtSignal
+
+from MyQtApp.session import SessionLocal
+from MyQtApp.models import Cartas, Mazo, MazoCarta
+from MyQtApp.config import IMAGES_DIR, IMAGES_WEBP_DIR
+from MyQtApp.app.getImgs import get_webp_pixmap, get_pixmap_from_zip, get_hd_pixmap
+from MyQtApp.i18n import t, language_manager
+from MyQtApp.ui.toast import show_toast
+
+
+class ImportDecklistDialog(QDialog):
+    """Diálogo para pegar e importar un mazo en formato texto (ej. '4 Pikachu SVI 63' o '4 Miraidon')."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(t("Importar Mazo"))
+        self.resize(480, 360)
+
+        layout = QVBoxLayout(self)
+
+        lbl = QLabel(t("Pega tu lista de mazo aquí (ejemplo: '4 Pikachu' o '4 Pikachu SVI 063'):"), self)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("font-weight: bold; color: #f8fafc;")
+        layout.addWidget(lbl)
+
+        self.text_edit = QTextEdit(self)
+        self.text_edit.setPlaceholderText("4 Pikachu\n3 Miraidon ex\n2 Nest Ball\n...")
+        self.text_edit.setStyleSheet("""
+            QTextEdit {
+                background-color: #0f172a;
+                color: #e2e8f0;
+                border: 1px solid rgba(56, 189, 248, 0.4);
+                border-radius: 8px;
+                font-family: monospace;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.text_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_text(self):
+        return self.text_edit.toPlainText().strip()
+
+
+class PrintCardItemWidget(QFrame):
+    """Widget que representa una carta en la cola de impresión con miniatura y controles de cantidad."""
+    quantity_changed = pyqtSignal()
+    removed = pyqtSignal(str) # card_key
+
+    def __init__(self, card_data, quantity=1, parent=None):
+        super().__init__(parent)
+        self.card_data = card_data # dict with id_api, nombre, idioma, edition
+        self.card_key = f"{card_data.get('id_api')}:{card_data.get('idioma', 'es')}"
+
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet("""
+            PrintCardItemWidget {
+                background-color: rgba(15, 23, 42, 0.75);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 10px;
+                padding: 6px;
+            }
+            PrintCardItemWidget:hover {
+                border-color: #38bdf8;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(10)
+
+        # Miniatura de carta
+        self.lbl_img = QLabel(self)
+        self.lbl_img.setFixedSize(54, 75)
+        self.lbl_img.setScaledContents(True)
+
+        lang = card_data.get("idioma", "es")
+        id_api = card_data.get("id_api")
+        nombre = card_data.get("nombre")
+
+        pix = get_webp_pixmap(id_api, nombre, lang, size=(54, 75))
+        if not pix:
+            pix = get_pixmap_from_zip(nombre, size=(54, 75), id_api=id_api)
+        if pix:
+            self.lbl_img.setPixmap(pix)
+        else:
+            self.lbl_img.setText("🎴")
+            self.lbl_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.lbl_img.setStyleSheet("background: #1e293b; color: #94a3b8; border-radius: 4px;")
+
+        layout.addWidget(self.lbl_img)
+
+        # Info de carta
+        info_vbox = QVBoxLayout()
+        info_vbox.setSpacing(2)
+
+        lbl_nombre = QLabel(nombre or "Carta sin nombre", self)
+        lbl_nombre.setStyleSheet("font-weight: bold; font-size: 13px; color: #f8fafc;")
+
+        set_info = card_data.get("edition") or card_data.get("set_id") or ""
+        lbl_sub = QLabel(f"ID: {id_api} | {set_info}", self)
+        lbl_sub.setStyleSheet("font-size: 11px; color: #94a3b8;")
+
+        info_vbox.addWidget(lbl_nombre)
+        info_vbox.addWidget(lbl_sub)
+        info_vbox.addStretch()
+
+        layout.addLayout(info_vbox, stretch=1)
+
+        # Controles de cantidad
+        qty_layout = QHBoxLayout()
+        qty_layout.setSpacing(4)
+
+        btn_minus = QPushButton("-", self)
+        btn_minus.setFixedSize(28, 28)
+        btn_minus.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_minus.setStyleSheet("""
+            QPushButton {
+                background: #334155; color: white; font-weight: bold; border-radius: 6px; font-size: 14px;
+            }
+            QPushButton:hover { background: #475569; }
+        """)
+
+        self.spin_qty = QSpinBox(self)
+        self.spin_qty.setRange(1, 99)
+        self.spin_qty.setValue(quantity)
+        self.spin_qty.setFixedSize(50, 28)
+        self.spin_qty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.spin_qty.setStyleSheet("""
+            QSpinBox {
+                background-color: #0f172a; color: #38bdf8; font-weight: bold;
+                border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px;
+            }
+        """)
+
+        btn_plus = QPushButton("+", self)
+        btn_plus.setFixedSize(28, 28)
+        btn_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_plus.setStyleSheet("""
+            QPushButton {
+                background: #334155; color: white; font-weight: bold; border-radius: 6px; font-size: 14px;
+            }
+            QPushButton:hover { background: #475569; }
+        """)
+
+        btn_del = QPushButton("❌", self)
+        btn_del.setFixedSize(28, 28)
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setToolTip(t("Eliminar"))
+        btn_del.setStyleSheet("""
+            QPushButton {
+                background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 6px;
+            }
+            QPushButton:hover { background: rgba(239, 68, 68, 0.4); }
+        """)
+
+        btn_minus.clicked.connect(self.decrement)
+        btn_plus.clicked.connect(self.increment)
+        btn_del.clicked.connect(lambda: self.removed.emit(self.card_key))
+        self.spin_qty.valueChanged.connect(lambda _: self.quantity_changed.emit())
+
+        qty_layout.addWidget(btn_minus)
+        qty_layout.addWidget(self.spin_qty)
+        qty_layout.addWidget(btn_plus)
+        qty_layout.addWidget(btn_del)
+
+        layout.addLayout(qty_layout)
+
+    def decrement(self):
+        val = self.spin_qty.value()
+        if val > 1:
+            self.spin_qty.setValue(val - 1)
+
+    def increment(self):
+        val = self.spin_qty.value()
+        self.spin_qty.setValue(val + 1)
+
+    def get_quantity(self):
+        return self.spin_qty.value()
+
+
+class PrintView(QWidget):
+    """Sección de impresión de proxys en PDF basada en Mazos."""
+    def __init__(self, usuario="admin", parent=None):
+        super().__init__(parent)
+        self.usuario = usuario
+        self.session = SessionLocal()
+        self.queue_items = {} # dict mapping card_key -> PrintCardItemWidget
+
+        self.init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refrescar_mazos_combo()
+
+    def init_ui(self):
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(12)
+
+        # ── Columna Izquierda: Selección de Mazo, Configuración y Acciones ──
+        left_panel = QWidget(self)
+        left_panel.setFixedWidth(340)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+
+        # Título
+        lbl_title = QLabel("🖨️ " + t("Imprimir Proxies"), self)
+        lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #38bdf8;")
+        left_layout.addWidget(lbl_title)
+
+        # 1. Buscador y Selector de Mazos Creados
+        deck_box = QWidget(self)
+        deck_box.setStyleSheet("""
+            QWidget {
+                background-color: rgba(15, 23, 42, 0.7);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        deck_vbox = QVBoxLayout(deck_box)
+        deck_vbox.setSpacing(8)
+
+        lbl_deck = QLabel("🃏 " + t("Seleccionar Mazo para Imprimir"), self)
+        lbl_deck.setStyleSheet("font-weight: bold; font-size: 12px; color: #f8fafc;")
+        deck_vbox.addWidget(lbl_deck)
+
+        self.combo_mazos = QComboBox(self)
+        self.combo_mazos.setStyleSheet("""
+            QComboBox {
+                background-color: #0f172a; color: white; border: 1px solid #334155; border-radius: 6px; padding: 8px;
+            }
+            QComboBox:focus { border-color: #38bdf8; }
+        """)
+        deck_vbox.addWidget(self.combo_mazos)
+
+        btn_load_deck = QPushButton("📥 " + t("Cargar Mazo a la Cola"), self)
+        btn_load_deck.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_load_deck.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7; color: white; font-weight: bold; border-radius: 6px; padding: 10px; font-size: 13px;
+            }
+            QPushButton:hover { background-color: #0369a1; }
+        """)
+        btn_load_deck.clicked.connect(self.cargar_mazo_seleccionado_a_cola)
+        deck_vbox.addWidget(btn_load_deck)
+
+        btn_import_deck = QPushButton("📋 " + t("Importar Mazo desde Texto"), self)
+        btn_import_deck.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_import_deck.setStyleSheet("""
+            QPushButton {
+                background-color: #334155; color: #e2e8f0; font-weight: bold; border-radius: 6px; padding: 8px;
+            }
+            QPushButton:hover { background-color: #475569; }
+        """)
+        btn_import_deck.clicked.connect(self.abrir_dialogo_importar_mazo)
+        deck_vbox.addWidget(btn_import_deck)
+
+        left_layout.addWidget(deck_box)
+
+        # 2. Opciones de PDF y formato de impresión
+        config_box = QWidget(self)
+        config_box.setStyleSheet("""
+            QWidget {
+                background-color: rgba(15, 23, 42, 0.7);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        config_vbox = QVBoxLayout(config_box)
+        config_vbox.setSpacing(8)
+
+        lbl_cfg_title = QLabel("⚙️ " + t("Ajustes de PDF"), self)
+        lbl_cfg_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #38bdf8;")
+        config_vbox.addWidget(lbl_cfg_title)
+
+        # Tamaño de papel
+        row_paper = QHBoxLayout()
+        lbl_paper = QLabel(t("Tamaño de papel") + ":", self)
+        lbl_paper.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        self.combo_paper = QComboBox(self)
+        self.combo_paper.addItems(["A4 (210 x 297 mm)", "Letter (215.9 x 279.4 mm)"])
+        self.combo_paper.setStyleSheet("background: #0f172a; color: white; border-radius: 4px; padding: 3px;")
+        row_paper.addWidget(lbl_paper)
+        row_paper.addWidget(self.combo_paper)
+        config_vbox.addLayout(row_paper)
+
+        # Medidas de cartas
+        row_card_size = QHBoxLayout()
+        lbl_csize = QLabel(t("Medidas de carta") + ":", self)
+        lbl_csize.setStyleSheet("color: #cbd5e1; font-size: 11px;")
+        self.combo_card_size = QComboBox(self)
+        self.combo_card_size.addItems(["Standard TCG (63 x 88 mm)", "Japanese Size (59 x 86 mm)"])
+        self.combo_card_size.setStyleSheet("background: #0f172a; color: white; border-radius: 4px; padding: 3px;")
+        row_card_size.addWidget(lbl_csize)
+        row_card_size.addWidget(self.combo_card_size)
+        config_vbox.addLayout(row_card_size)
+
+        # Marcas de corte
+        self.chk_crop_marks = QCheckBox(t("Marcas de corte"), self)
+        self.chk_crop_marks.setChecked(True)
+        self.chk_crop_marks.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        config_vbox.addWidget(self.chk_crop_marks)
+
+        # Espaciado
+        self.chk_spacing = QCheckBox(t("Espacio entre cartas") + " (1mm)", self)
+        self.chk_spacing.setChecked(False)
+        self.chk_spacing.setStyleSheet("color: #e2e8f0; font-size: 11px;")
+        config_vbox.addWidget(self.chk_spacing)
+
+        left_layout.addWidget(config_box)
+
+        # Resumen de estadísticas
+        self.lbl_stats = QLabel("Total: 0 cartas | 0 páginas PDF (3x3 grid)", self)
+        self.lbl_stats.setStyleSheet("font-size: 12px; font-weight: bold; color: #f59e0b;")
+        left_layout.addWidget(self.lbl_stats)
+
+        # Botón de Generación de PDF
+        self.btn_generate_pdf = QPushButton(t("Generar PDF"), self)
+        self.btn_generate_pdf.setFixedSize(340, 46)
+        self.btn_generate_pdf.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_generate_pdf.setStyleSheet("""
+            QPushButton {
+                background: linear-gradient(135deg, #10b981, #059669);
+                background-color: #10b981;
+                color: white;
+                font-size: 15px;
+                font-weight: bold;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+        """)
+        self.btn_generate_pdf.clicked.connect(self.generar_pdf)
+        left_layout.addWidget(self.btn_generate_pdf)
+
+        btn_clear = QPushButton(t("Limpiar Cola"), self)
+        btn_clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_clear.setStyleSheet("""
+            QPushButton {
+                background: rgba(239, 68, 68, 0.2); color: #ef4444; font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 6px;
+            }
+            QPushButton:hover { background: rgba(239, 68, 68, 0.4); }
+        """)
+        btn_clear.clicked.connect(self.limpiar_cola)
+        left_layout.addWidget(btn_clear)
+
+        left_layout.addStretch()
+        main_layout.addWidget(left_panel)
+
+        # ── Columna Derecha: Cola de cartas agregadas ──
+        right_panel = QWidget(self)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+
+        lbl_queue_header = QLabel("📋 " + t("Cola de Impresión"), self)
+        lbl_queue_header.setStyleSheet("font-size: 16px; font-weight: bold; color: #f8fafc;")
+        right_layout.addWidget(lbl_queue_header)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: rgba(15, 23, 42, 0.5);
+                border: 1px solid rgba(56, 189, 248, 0.2);
+                border-radius: 10px;
+            }
+        """)
+
+        self.queue_container = QWidget()
+        self.queue_vbox = QVBoxLayout(self.queue_container)
+        self.queue_vbox.setContentsMargins(10, 10, 10, 10)
+        self.queue_vbox.setSpacing(8)
+        self.queue_vbox.addStretch()
+
+        self.scroll_area.setWidget(self.queue_container)
+        right_layout.addWidget(self.scroll_area)
+
+        main_layout.addWidget(right_panel, stretch=1)
+
+        self.refrescar_mazos_combo()
+        self.actualizar_estadisticas()
+
+    def refrescar_mazos_combo(self):
+        self.combo_mazos.clear()
+        mazos = self.session.query(Mazo).filter(Mazo.usuario_nombre == self.usuario).all()
+
+        if not mazos:
+            self.combo_mazos.addItem(t("Sin mazos creados"), None)
+        else:
+            for m in mazos:
+                total_qty = sum(mc.cantidad for mc in m.cartas)
+                self.combo_mazos.addItem(f"🃏 {m.nombre} ({total_qty} cartas)", m.id)
+
+    def cargar_mazo_seleccionado_a_cola(self):
+        mazo_id = self.combo_mazos.currentData()
+        if not mazo_id:
+            show_toast("No hay mazo seleccionado.", "warning", 2000)
+            return
+
+        mazo = self.session.query(Mazo).filter(Mazo.id == mazo_id).first()
+        if not mazo or not mazo.cartas:
+            show_toast("El mazo seleccionado está vacío.", "warning", 2000)
+            return
+
+        for mc in mazo.cartas:
+            self.agregar_carta_a_cola({
+                "id_api": mc.id_api,
+                "nombre": mc.nombre_carta,
+                "idioma": mc.idioma,
+                "edition": mc.edition or ""
+            }, quantity=mc.cantidad)
+
+        show_toast(f"✔️ Mazo '{mazo.nombre}' cargado a la cola.", "success", 2500)
+
+    def agregar_carta_a_cola(self, card_data, quantity=1):
+        card_key = f"{card_data.get('id_api')}:{card_data.get('idioma', 'es')}"
+
+        if card_key in self.queue_items:
+            widget = self.queue_items[card_key]
+            widget.spin_qty.setValue(widget.spin_qty.value() + quantity)
+        else:
+            widget = PrintCardItemWidget(card_data, quantity=quantity, parent=self)
+            widget.quantity_changed.connect(self.actualizar_estadisticas)
+            widget.removed.connect(self.remover_carta_de_cola)
+
+            count = self.queue_vbox.count()
+            self.queue_vbox.insertWidget(max(0, count - 1), widget)
+            self.queue_items[card_key] = widget
+
+        self.actualizar_estadisticas()
+
+    def remover_carta_de_cola(self, card_key):
+        if card_key in self.queue_items:
+            widget = self.queue_items.pop(card_key)
+            self.queue_vbox.removeWidget(widget)
+            widget.deleteLater()
+            self.actualizar_estadisticas()
+
+    def limpiar_cola(self):
+        for card_key, widget in list(self.queue_items.items()):
+            self.queue_vbox.removeWidget(widget)
+            widget.deleteLater()
+        self.queue_items.clear()
+        self.actualizar_estadisticas()
+
+    def abrir_dialogo_importar_mazo(self):
+        dialog = ImportDecklistDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            texto = dialog.get_text()
+            if not texto:
+                return
+
+            lineas = texto.splitlines()
+            agregadas = 0
+
+            for linea in lineas:
+                linea = linea.strip()
+                if not linea or linea.startswith("#"):
+                    continue
+
+                match = re.match(r"^(\d+)\s+(.+)$", linea)
+                if match:
+                    qty = int(match.group(1))
+                    card_search = match.group(2).strip()
+                else:
+                    qty = 1
+                    card_search = linea
+
+                carta = self.session.query(Cartas).filter(Cartas.nombre.ilike(f"%{card_search}%")).first()
+                if not carta:
+                    first_word = card_search.split()[0]
+                    carta = self.session.query(Cartas).filter(Cartas.nombre.ilike(f"%{first_word}%")).first()
+
+                if carta:
+                    self.agregar_carta_a_cola({
+                        "id_api": carta.id_api,
+                        "nombre": carta.nombre,
+                        "idioma": carta.idioma or "es",
+                        "edition": carta.edition or ""
+                    }, quantity=qty)
+                    agregadas += qty
+
+            if agregadas > 0:
+                show_toast(f"✔️ Se agregaron {agregadas} cartas a la cola.", "success", 2500)
+            else:
+                QMessageBox.warning(self, "Importar Mazo", "No se encontraron coincidencias para la lista.")
+
+    def actualizar_estadisticas(self):
+        total_cards = sum(widget.get_quantity() for widget in self.queue_items.values())
+        pages = (total_cards + 8) // 9 if total_cards > 0 else 0
+
+        self.lbl_stats.setText(f"Total: {total_cards} cartas | {pages} páginas PDF (3x3 grid)")
+        self.btn_generate_pdf.setEnabled(total_cards > 0)
+
+    def generar_pdf(self):
+        if not self.queue_items:
+            QMessageBox.warning(self, t("Error"), "La cola de impresión está vacía.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar PDF de Proxies",
+            os.path.expanduser("~/Desktop/TCG_Proxies.pdf"),
+            "Archivos PDF (*.pdf)"
+        )
+        if not file_path:
+            return
+
+        try:
+            dpi = 300
+            writer = QPdfWriter(file_path)
+            writer.setResolution(dpi)
+
+            is_letter = "Letter" in self.combo_paper.currentText()
+            page_size_id = QPageSize.PageSizeId.Letter if is_letter else QPageSize.PageSizeId.A4
+            writer.setPageSize(QPageSize(page_size_id))
+
+            layout_margin = QMarginsF(0, 0, 0, 0)
+            writer.setPageLayout(QPageLayout(QPageSize(page_size_id), QPageLayout.Orientation.Portrait, layout_margin))
+
+            paper_w_mm = 215.9 if is_letter else 210.0
+            paper_h_mm = 279.4 if is_letter else 297.0
+
+            is_japanese = "Japanese" in self.combo_card_size.currentText()
+            card_w_mm = 59.0 if is_japanese else 63.0
+            card_h_mm = 86.0 if is_japanese else 88.0
+
+            spacing_mm = 1.0 if self.chk_spacing.isChecked() else 0.0
+            draw_crop_marks = self.chk_crop_marks.isChecked()
+
+            grid_w_mm = (3 * card_w_mm) + (2 * spacing_mm)
+            grid_h_mm = (3 * card_h_mm) + (2 * spacing_mm)
+
+            margin_x_mm = (paper_w_mm - grid_w_mm) / 2.0
+            margin_y_mm = (paper_h_mm - grid_h_mm) / 2.0
+
+            mm_to_px = dpi / 25.4
+
+            painter = QPainter(writer)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+            cards_list = []
+            for widget in self.queue_items.values():
+                card_info = widget.card_data
+                qty = widget.get_quantity()
+                for _ in range(qty):
+                    cards_list.append(card_info)
+
+            for idx, card in enumerate(cards_list):
+                pos_in_page = idx % 9
+
+                if idx > 0 and pos_in_page == 0:
+                    writer.newPage()
+
+                row = pos_in_page // 3
+                col = pos_in_page % 3
+
+                x_mm = margin_x_mm + col * (card_w_mm + spacing_mm)
+                y_mm = margin_y_mm + row * (card_h_mm + spacing_mm)
+
+                x_px = x_mm * mm_to_px
+                y_px = y_mm * mm_to_px
+                w_px = card_w_mm * mm_to_px
+                h_px = card_h_mm * mm_to_px
+
+                lang = card.get("idioma", "es")
+                id_api = card.get("id_api")
+                nombre = card.get("nombre")
+
+                pix = get_hd_pixmap(id_api, nombre, lang)
+                if not pix:
+                    pix = get_webp_pixmap(id_api, nombre, lang)
+                if not pix:
+                    pix = get_pixmap_from_zip(nombre, id_api=id_api)
+
+                target_rect = QRectF(x_px, y_px, w_px, h_px)
+
+                if pix and not pix.isNull():
+                    painter.drawPixmap(target_rect.toRect(), pix)
+                else:
+                    painter.setPen(QPen(QColor("#cbd5e1"), 2))
+                    painter.drawRect(target_rect)
+                    painter.setFont(QFont("Arial", 10))
+                    painter.drawText(target_rect, Qt.AlignmentFlag.AlignCenter, f"{nombre}\n({id_api})")
+
+                if draw_crop_marks:
+                    pen_mark = QPen(QColor(100, 100, 100), 1.5, Qt.PenStyle.DashLine)
+                    painter.setPen(pen_mark)
+
+                    mark_len_px = 4.0 * mm_to_px
+
+                    x1, y1 = x_px, y_px
+                    x2, y2 = x_px + w_px, y_px + h_px
+
+                    painter.drawLine(int(x1 - mark_len_px), int(y1), int(x1), int(y1))
+                    painter.drawLine(int(x1), int(y1 - mark_len_px), int(x1), int(y1))
+
+                    painter.drawLine(int(x2), int(y1), int(x2 + mark_len_px), int(y1))
+                    painter.drawLine(int(x2), int(y1 - mark_len_px), int(x2), int(y1))
+
+                    painter.drawLine(int(x1 - mark_len_px), int(y2), int(x1), int(y2))
+                    painter.drawLine(int(x1), int(y2), int(x1), int(y2 + mark_len_px))
+
+                    painter.drawLine(int(x2), int(y2), int(x2 + mark_len_px), int(y2))
+                    painter.drawLine(int(x2), int(y2), int(x2), int(y2 + mark_len_px))
+
+            painter.end()
+
+            show_toast("✔️ PDF generado con éxito.", "success", 3500)
+            QMessageBox.information(
+                self,
+                "PDF Creado",
+                f"El archivo PDF se ha generado correctamente en:\n{file_path}\n\n¡Listo para imprimir a 100% de escala!"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error generando PDF", f"Ocurrió un error al crear el archivo PDF:\n{str(e)}")

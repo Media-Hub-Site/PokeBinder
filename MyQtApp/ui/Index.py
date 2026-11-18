@@ -1,20 +1,24 @@
 import random
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
-    QMessageBox, QStackedWidget, QSpacerItem, QSizePolicy
+    QMessageBox, QStackedWidget, QSpacerItem, QSizePolicy, QGraphicsOpacityEffect
 )
 from PyQt6.QtCore import Qt, QUrl, QPropertyAnimation, QEasingCurve, QPoint, QByteArray, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtMultimedia import QSoundEffect, QMediaPlayer, QAudioOutput
 import os
 
-from MyQtApp.config import SOUNDS_DIR, IMAGES_DIR, ICONS_DIR, load_settings
+from MyQtApp.config import SOUNDS_DIR, IMAGES_DIR, ICONS_DIR, load_settings, get_music_track_path
 from MyQtApp.app.db_services import agregar_cartas_usuario, eliminar_cartas_usuario
 
 from .Galeria import GaleriaCartas
 from .Inventario import GaleriaCartasInventario
 from .Ajustes import AjustesWidget
 from .Binder import BinderView
+from .PrintView import PrintView
+from .Mazos import MazosView
+from MyQtApp.i18n import t, language_manager
+
 
 class BotonConSonido(QPushButton):
     def __init__(self, texto, parent=None):
@@ -44,6 +48,45 @@ class BotonConSonido(QPushButton):
         super().mousePressEvent(event)
 
 
+class VariantLegendSidebarWidget(QWidget):
+    """Panel vertical compacto en la columna lateral izquierda que describe el significado de cada color de variante."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(5)
+
+        header = QLabel("🎨 " + t("Leyenda Variantes"), self)
+        header.setStyleSheet("font-weight: bold; font-size: 11px; color: #38bdf8;")
+        layout.addWidget(header)
+
+        from MyQtApp.config import VARIANT_COLOR_MAP
+        for key, info in VARIANT_COLOR_MAP.items():
+            item_row = QHBoxLayout()
+            item_row.setContentsMargins(0, 0, 0, 0)
+            item_row.setSpacing(6)
+
+            color_badge = QLabel(self)
+            color_badge.setFixedSize(10, 16)
+            color_badge.setStyleSheet(f"background-color: {info['color']}; border: 1px solid {info['border']}; border-radius: 3px;")
+
+            desc = QLabel(f"{info['name']}", self)
+            desc.setStyleSheet("font-size: 11px; color: #f8fafc; font-weight: 500;")
+
+            item_row.addWidget(color_badge)
+            item_row.addWidget(desc)
+            item_row.addStretch()
+            layout.addLayout(item_row)
+
+        self.setStyleSheet("""
+            QWidget {
+                background-color: rgba(15, 23, 42, 0.7);
+                border: 1px solid rgba(56, 189, 248, 0.3);
+                border-radius: 10px;
+            }
+        """)
+
+
 class MainWindow(QWidget):
     logout_requested = pyqtSignal()
 
@@ -53,7 +96,7 @@ class MainWindow(QWidget):
         self.animaciones_activas = self.settings.get("animaciones", True)
         self.usuario = usuario
         self.setObjectName("MainBackground")
-        self.setWindowTitle(f"Menú Principal - Usuario: {usuario.capitalize()}")
+        self.setWindowTitle(f"{t('Menú Principal')} - {t('Usuario:')} {usuario.capitalize()}")
         self.setGeometry(550, 250, 1000, 650)
 
         main_layout = QHBoxLayout(self)
@@ -65,48 +108,59 @@ class MainWindow(QWidget):
         iconoCarpeta = QIcon(os.path.join(ICONS_DIR, "carpeta.png"))
         iconoColeccion = QIcon(os.path.join(ICONS_DIR, "coleccion.png"))
 
-        self.btn_buscar = BotonConSonido(iconoBuscar, "Buscar")
-        self.btn_ver_carpeta = BotonConSonido(iconoCarpeta, "Binder")
-        self.btn_mi_coleccion = BotonConSonido(iconoColeccion, "Colección")
+        self.btn_buscar = BotonConSonido(iconoBuscar, t("Buscar"))
+        self.btn_ver_carpeta = BotonConSonido(iconoCarpeta, t("Binder"))
+        self.btn_mi_coleccion = BotonConSonido(iconoColeccion, t("Colección"))
+        self.btn_mazos = BotonConSonido(t("Mazos"))
+        self.btn_print = BotonConSonido(t("Print"))
 
         botones_principales = [
             self.btn_buscar,
             self.btn_ver_carpeta,
             self.btn_mi_coleccion,
-            BotonConSonido("⚙️ Ajustes"),
+            self.btn_mazos,
+            self.btn_print,
+            BotonConSonido(f"⚙️ {t('Ajustes')}"),
         ]
 
         for btn in botones_principales:
-            btn.setFixedHeight(45)
+            btn.setFixedHeight(44)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("class", "NavButton")
             nav_layout.addWidget(btn)
 
         self.btn_ajustes = botones_principales[-1]
 
-        nav_layout.addSpacing(30)
+        nav_layout.addSpacing(16)
 
-        self.btn_agregar = BotonConSonido("➕ Agregar")
-        self.btn_eliminar = BotonConSonido("🗑️ Eliminar")
-        self.btn_vaciar = BotonConSonido("⚠️ Vaciar")
+        self.btn_agregar = BotonConSonido(t("Agregar"))
+        self.btn_eliminar = BotonConSonido(t("Eliminar"))
+        self.btn_vaciar = BotonConSonido(t("Vaciar"))
 
         botones_secundarios_layout = QVBoxLayout()
+        botones_secundarios_layout.setSpacing(8)
         for btn in [self.btn_agregar, self.btn_eliminar, self.btn_vaciar]:
-            btn.setFixedHeight(40)
+            btn.setFixedHeight(38)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("class", "ActionSecondary")
             botones_secundarios_layout.addWidget(btn)
-            botones_secundarios_layout.addSpacing(10)
 
         nav_layout.addLayout(botones_secundarios_layout)
+
+        # Cuadro explicativo de la leyenda de variantes
+        nav_layout.addSpacing(12)
+        self.variant_legend_sidebar = VariantLegendSidebarWidget(self)
+        nav_layout.addWidget(self.variant_legend_sidebar)
+
         nav_layout.addStretch()
 
-        self.btn_salir = BotonConSonido("🚪 Salir del programa")
-        self.btn_salir.setFixedHeight(50)
+        self.btn_salir = BotonConSonido(t("Salir del programa"))
+        self.btn_salir.setFixedHeight(44)
         self.btn_salir.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_salir.setProperty("class", "ExitButton")
         nav_layout.addWidget(self.btn_salir)
-        nav_layout.addSpacing(20)
+        nav_layout.addSpacing(14)
+
 
         # Panel lateral
         side_widget = QWidget()
@@ -120,16 +174,18 @@ class MainWindow(QWidget):
 
         # Páginas con transición
         self.paginas = QStackedWidget()
-        self.paginas.addWidget(GaleriaCartas(IMAGES_DIR))       # índice 0
-        self.paginas.addWidget(BinderView(self.usuario))           # índice 1
-        self.paginas.addWidget(GaleriaCartasInventario(IMAGES_DIR, self.usuario))  # índice 2
-        self.paginas.addWidget(AjustesWidget())  # índice 3
+        self.paginas.addWidget(GaleriaCartas(IMAGES_DIR))                     # índice 0
+        self.paginas.addWidget(BinderView(self.usuario))                         # índice 1
+        self.paginas.addWidget(GaleriaCartasInventario(IMAGES_DIR, self.usuario))# índice 2
+        self.paginas.addWidget(MazosView(self.usuario))                          # índice 3
+        self.paginas.addWidget(PrintView(self.usuario))                          # índice 4
+        self.paginas.addWidget(AjustesWidget())                                  # índice 5
 
         # Área principal
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(14, 14, 14, 14)
-        content_layout.setSpacing(8)
+        content_layout.setContentsMargins(14, 14, 14, 10)
+        content_layout.setSpacing(6)
         content_widget.setObjectName('content')
 
         content_layout.addWidget(self.paginas)
@@ -137,7 +193,7 @@ class MainWindow(QWidget):
         # Pie inferior
         bottom_bar = QWidget()
         bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(6, 6, 6, 6)
+        bottom_layout.setContentsMargins(4, 4, 4, 4)
         bottom_layout.setSpacing(8)
         bottom_layout.addItem(QSpacerItem(10, 10, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
@@ -170,13 +226,15 @@ class MainWindow(QWidget):
         self.btn_buscar.clicked.connect(lambda: self.animar_transicion(0))
         self.btn_ver_carpeta.clicked.connect(lambda: self.animar_transicion(1))
         self.btn_mi_coleccion.clicked.connect(lambda: self.animar_transicion(2))
-        self.btn_ajustes.clicked.connect(lambda: self.animar_transicion(3))
+        self.btn_mazos.clicked.connect(lambda: self.animar_transicion(3))
+        self.btn_print.clicked.connect(lambda: self.animar_transicion(4))
+        self.btn_ajustes.clicked.connect(lambda: self.animar_transicion(5))
         self.btn_salir.clicked.connect(self.confirmar_salir)
         self.btn_agregar.clicked.connect(self.agregar_cartas)
         self.btn_eliminar.clicked.connect(self.eliminar_cartas)
         self.btn_vaciar.clicked.connect(self.vaciar_binder)
 
-        ajustes = self.paginas.widget(3)
+        ajustes = self.paginas.widget(5)
         ajustes.music_volume_changed.connect(self.actualizar_volumen_musica)
         ajustes.music_track_changed.connect(self.cambiar_musica)
         ajustes.animations_toggled.connect(self.toggle_animaciones)
@@ -188,8 +246,7 @@ class MainWindow(QWidget):
 
         # Configurar audio
         pista = self.settings.get("pista_musica", 1)
-        musica = f"musica_fondo_{pista}.mp3"
-        ruta_musica = os.path.join(SOUNDS_DIR, musica)
+        ruta_musica = get_music_track_path(pista)
 
         self.audio_output = QAudioOutput()
         self.player = QMediaPlayer()
@@ -200,12 +257,24 @@ class MainWindow(QWidget):
         self.audio_output.setVolume(vol)
         self.player.play()
 
+        language_manager.language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self):
+        self.setWindowTitle(f"{t('Menú Principal')} - {t('Usuario:')} {self.usuario.capitalize()}")
+        self.btn_buscar.setText(t("Buscar"))
+        self.btn_ver_carpeta.setText(t("Binder"))
+        self.btn_mi_coleccion.setText(t("Colección"))
+        self.btn_mazos.setText(t("Mazos"))
+        self.btn_print.setText(t("Print"))
+        self.btn_ajustes.setText(f"⚙️ {t('Ajustes')}")
+        self.btn_vaciar.setText(t("Vaciar"))
+        self.btn_salir.setText(t("Salir del programa"))
+
     def actualizar_volumen_musica(self, valor):
         self.audio_output.setVolume(valor / 100.0)
 
     def cambiar_musica(self, pista):
-        musica = f"musica_fondo_{pista}.mp3"
-        ruta_musica = os.path.join(SOUNDS_DIR, musica)
+        ruta_musica = get_music_track_path(pista)
         was_playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         self.player.setSource(QUrl.fromLocalFile(ruta_musica))
         if was_playing:
@@ -239,41 +308,29 @@ class MainWindow(QWidget):
         if not self.animaciones_activas:
             # Sin animación: cambiar de página al instante
             self.paginas.setCurrentIndex(nuevo_indice)
-            widget_nuevo.move(0, 0)
-            widget_actual.hide()
-            widget_nuevo.show()
             self.actualizar_botones_secundarios(nuevo_indice)
             return
 
-        direccion = 1 if nuevo_indice > indice_actual else -1
+        # Transición moderna de fundido suave (Cross-fade)
+        self.paginas.setCurrentIndex(nuevo_indice)
+        self.actualizar_botones_secundarios(nuevo_indice)
 
-        widget_nuevo.move(direccion * self.paginas.width(), 0)
-        widget_nuevo.show()
+        eff = QGraphicsOpacityEffect(widget_nuevo)
+        widget_nuevo.setGraphicsEffect(eff)
 
-        anim_nuevo = QPropertyAnimation(widget_nuevo, b"pos", self)
-        anim_nuevo.setDuration(400)
-        anim_nuevo.setStartValue(widget_nuevo.pos())
-        anim_nuevo.setEndValue(QPoint(0, 0))
-        anim_nuevo.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        anim = QPropertyAnimation(eff, b"opacity", self)
+        anim.setDuration(200)
+        anim.setStartValue(0.15)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        anim_actual = QPropertyAnimation(widget_actual, b"pos", self)
-        anim_actual.setDuration(400)
-        anim_actual.setStartValue(widget_actual.pos())
-        anim_actual.setEndValue(QPoint(-direccion * self.paginas.width(), 0))
-        anim_actual.setEasingCurve(QEasingCurve.Type.InOutCubic)
-
-        # Guardar referencias para evitar recolección de basura
-        self._current_animations = [anim_nuevo, anim_actual]
-
-        def on_finish():
-            self.paginas.setCurrentIndex(nuevo_indice)
-            widget_actual.hide()
-            self.actualizar_botones_secundarios(nuevo_indice)
+        def cleanup():
+            widget_nuevo.setGraphicsEffect(None)
             self._current_animations = []
-        anim_nuevo.finished.connect(on_finish)
 
-        anim_nuevo.start()
-        anim_actual.start()
+        anim.finished.connect(cleanup)
+        self._current_animations = [anim, eff]
+        anim.start()
 
     def cambiar_cuenta(self):
         if hasattr(self, 'player') and self.player:
@@ -293,6 +350,8 @@ class MainWindow(QWidget):
             self.btn_agregar.setVisible(indice == 0)
             self.btn_eliminar.setVisible(indice == 2)
             self.btn_vaciar.setVisible(indice == 1)
+            if hasattr(self, 'variant_legend_sidebar') and self.variant_legend_sidebar:
+                self.variant_legend_sidebar.setVisible(indice == 1)
         except Exception as e:
             print(f"Error en actualizar_botones_secundarios: {e}")
 
@@ -330,10 +389,11 @@ class MainWindow(QWidget):
             self.mostrar_mensaje("Selecciona al menos una carta para agregar.")
             return
 
-        cartas_ids = [carta["id_api"] for carta in cartas_seleccionadas]
-        exitos = agregar_cartas_usuario(self.usuario, cartas_ids)
+        exitos = agregar_cartas_usuario(self.usuario, cartas_seleccionadas)
 
         if exitos:
+            if hasattr(galeria_busqueda, 'limpiar_seleccion'):
+                galeria_busqueda.limpiar_seleccion()
             self.mostrar_mensaje(f"✔️ Se han agregado {exitos} carta(s) a tu colección.")
             try:
                 inventario = self.paginas.widget(2)
@@ -392,12 +452,11 @@ class MainWindow(QWidget):
         if resp != QMessageBox.StandardButton.Yes:
             return
 
-        cartas_ids = [c.get('id_api') if isinstance(c, dict) else c for c in cartas]
-        cartas_ids = [cid for cid in cartas_ids if cid]
-        
-        eliminados = eliminar_cartas_usuario(self.usuario, cartas_ids)
+        eliminados = eliminar_cartas_usuario(self.usuario, cartas)
 
         if eliminados:
+            if hasattr(inventario, 'limpiar_seleccion'):
+                inventario.limpiar_seleccion()
             self.mostrar_mensaje(f"✔️ Se han eliminado {eliminados} carta(s) de tu inventario.")
         else:
             self.mostrar_mensaje("❗No se eliminaron cartas (posiblemente ya no existían en la tabla o hubo error).")

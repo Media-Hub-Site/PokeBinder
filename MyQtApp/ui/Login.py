@@ -6,6 +6,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..session import SessionLocal
 from ..models import Usuarios
+from MyQtApp.i18n import t, language_manager
+
 
 
 class LoginWindow(QWidget):
@@ -13,7 +15,7 @@ class LoginWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Inicio de Sesión")
+        self.setWindowTitle(t("Inicio de Sesión"))
         self.setObjectName("LoginBackground")
 
         self.session = SessionLocal()
@@ -31,16 +33,16 @@ class LoginWindow(QWidget):
         card_layout.setContentsMargins(30, 30, 30, 30)
         card_layout.setSpacing(18)
 
-        self.label = QLabel("Ingresa tu nombre de usuario:")
+        self.label = QLabel(t("Ingresa tu nombre de usuario:"))
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setStyleSheet("font-size: 16px; font-weight: 600; color: #a85a7c;")
 
         self.input_username = QLineEdit()
-        self.input_username.setPlaceholderText("Nombre de usuario")
+        self.input_username.setPlaceholderText(t("Nombre de usuario"))
         self.input_username.setFixedHeight(38)
         self.input_username.setObjectName("LoginInput")
 
-        self.btn_login = QPushButton("Entrar / Crear usuario")
+        self.btn_login = QPushButton(t("Entrar / Crear usuario"))
         self.btn_login.setFixedHeight(42)
         self.btn_login.setObjectName("LoginBtn")
         self.btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -53,6 +55,13 @@ class LoginWindow(QWidget):
         main_layout.addWidget(card, 0, Qt.AlignmentFlag.AlignCenter)
 
         self.usuario_logueado = None
+        language_manager.language_changed.connect(self.retranslate_ui)
+
+    def retranslate_ui(self):
+        self.setWindowTitle(t("Inicio de Sesión"))
+        self.label.setText(t("Ingresa tu nombre de usuario:"))
+        self.input_username.setPlaceholderText(t("Nombre de usuario"))
+        self.btn_login.setText(t("Entrar / Crear usuario"))
 
     def mostrar_mensaje(self, titulo, mensaje, tipo="info"):
         msg_box = QMessageBox(self)
@@ -73,22 +82,22 @@ class LoginWindow(QWidget):
         username = self.input_username.text().strip()
 
         if not username:
-            self.mostrar_mensaje("Error", "Debes ingresar un nombre de usuario.", tipo="warning")
+            self.mostrar_mensaje(t("Error"), t("Debes ingresar un nombre de usuario."), tipo="warning")
             return
 
         user = self.session.query(Usuarios).filter(Usuarios.nombre.ilike(username)).first()
 
         if user:
-            self.mostrar_mensaje("Bienvenido", f"Bienvenido de nuevo, {username}!", tipo="info")
+            self.mostrar_mensaje(t("Bienvenido"), f"{t('Bienvenido de nuevo')}, {username}!", tipo="info")
         else:
             try:
                 nuevo = Usuarios(nombre=username)
                 self.session.add(nuevo)
                 self.session.commit()
-                self.mostrar_mensaje("Usuario creado", f"Usuario '{username}' creado correctamente.", tipo="info")
+                self.mostrar_mensaje(t("Usuario creado"), f"{t('Usuario creado')}: '{username}'.", tipo="info")
             except Exception as e:
                 self.session.rollback()
-                self.mostrar_mensaje("Error", f"No se pudo crear usuario: {e}", tipo="error")
+                self.mostrar_mensaje(t("Error"), f"{t('Error')}: {e}", tipo="error")
                 return
 
         self.usuario_logueado = username

@@ -10,10 +10,10 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         try:
-            url = "https://api.github.com/repos/Alan-Dave/TCG-Inventory/releases/latest"
+            url = "https://api.github.com/repos/Media-Hub-Site/PokeBinder/releases/latest"
             req = urllib.request.Request(
                 url, 
-                headers={'User-Agent': 'TCG-Inventory-Updater'}
+                headers={'User-Agent': 'PokeBinder-Updater'}
             )
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode('utf-8'))

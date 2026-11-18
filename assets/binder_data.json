@@ -5,42 +5,66 @@
         "3x4": {},
         "4x4": {}
     },
-    "Sofi": {
-        "0_1": "sm12-155",
-        "0_0": "sm12-155",
-        "0_2": "sm12-155",
-        "0_3": "xy3-72",
-        "0_4": "xy3-72",
-        "0_5": "xy3-72",
-        "1_0": "sv8pt5-40",
-        "1_1": "sv8pt5-40",
-        "1_2": "sv8pt5-40",
-        "1_6": "svp-172",
-        "1_7": "swshp-SWSH211",
-        "1_8": "sv8pt5-40",
-        "0_7": "sv6pt5-22",
-        "0_6": "sv6pt5-22",
-        "1_3": "pgo-35",
-        "1_5": "pgo-35",
-        "1_4": "sv8pt5-40",
-        "0_8": "sv6pt5-22",
-        "2_0": "g1-RC32",
-        "2_1": "g1-RC21",
-        "3_0": "sm2-140",
-        "3_1": "sm2-158",
-        "3_2": "sma-SV76",
-        "3_3": "sm2-92a",
-        "3_5": "sm2-92"
-    },
-    "sofi": {
-        "0_0": "sm12-155",
-        "0_1": "sm12-155",
-        "0_2": "sm12-155",
-        "0_3": "sm6-87",
-        "0_4": "sm6-87",
-        "0_5": "sm6-87",
-        "0_6": "xy3-72",
-        "0_7": "xy3-72",
-        "0_8": "xy3-72"
+    "test": {
+        "2x2": {},
+        "3x3": {
+            "0_3": {
+                "id_api": "sm3-1",
+                "idioma": "es",
+                "variante": "Holo"
+            },
+            "0_4": {
+                "id_api": "sm9-2",
+                "idioma": "es",
+                "variante": "Normal"
+            },
+            "0_1": {
+                "id_api": "ex12-1",
+                "idioma": "en",
+                "variante": "Normal"
+            },
+            "0_2": {
+                "id_api": "dp3-1",
+                "idioma": "en",
+                "variante": "Normal"
+            },
+            "0_0": {
+                "id_api": "dp3-1",
+                "idioma": "en",
+                "variante": "Normal"
+            },
+            "0_6": {
+                "id_api": "bw9-64",
+                "idioma": "en",
+                "variante": "Normal"
+            },
+            "0_7": {
+                "id_api": "hgss3-10",
+                "idioma": "en",
+                "variante": "Holo"
+            },
+            "0_8": {
+                "id_api": "hgss3-10",
+                "idioma": "en",
+                "variante": "Holo"
+            },
+            "0_5": {
+                "id_api": "bw6-106",
+                "idioma": "en",
+                "variante": "Normal"
+            },
+            "1_0": {
+                "id_api": "bw6-106",
+                "idioma": "es",
+                "variante": "Normal"
+            },
+            "1_1": {
+                "id_api": "bw6-106",
+                "idioma": "pt",
+                "variante": "Normal"
+            }
+        },
+        "3x4": {},
+        "4x4": {}
     }
 }

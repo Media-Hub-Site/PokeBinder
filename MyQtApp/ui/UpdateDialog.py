@@ -6,12 +6,15 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from MyQtApp.app.updater import FileDownloaderThread
+from MyQtApp.app.backup import create_database_backup
 from MyQtApp.config import APP_VERSION
+from MyQtApp.i18n import t
+
 
 class UpdateDialog(QDialog):
     def __init__(self, new_version, release_notes, download_url, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Actualización Disponible")
+        self.setWindowTitle(t("Actualización Disponible"))
         self.setFixedSize(500, 420)
         self.setObjectName("UpdateDialog")
         
@@ -23,17 +26,17 @@ class UpdateDialog(QDialog):
         layout.setSpacing(15)
         
         # Título
-        self.lbl_title = QLabel("¡Nueva actualización disponible!")
+        self.lbl_title = QLabel(t("¡Nueva actualización disponible!"))
         self.lbl_title.setObjectName("UpdateTitle")
         self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Comparativa de versiones
-        self.lbl_versiones = QLabel(f"Versión actual: {APP_VERSION}   ➔   Nueva versión: {new_version}")
+        self.lbl_versiones = QLabel(f"{t('Versión actual')}: {APP_VERSION}   ➔   {t('Nueva versión')}: {new_version}")
         self.lbl_versiones.setObjectName("UpdateVersions")
         self.lbl_versiones.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Notas de la versión
-        self.lbl_notes_title = QLabel("Notas de la versión:")
+        self.lbl_notes_title = QLabel(t("Notas de la versión:"))
         self.lbl_notes_title.setObjectName("UpdateNotesTitle")
         
         self.txt_notes = QTextBrowser()
@@ -49,7 +52,7 @@ class UpdateDialog(QDialog):
         self.progress_bar.hide()
         
         # Etiqueta de estado de la descarga
-        self.lbl_status = QLabel("Descargando actualización...")
+        self.lbl_status = QLabel(t("Descargando actualización..."))
         self.lbl_status.setObjectName("UpdateStatusLabel")
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_status.hide()
@@ -58,13 +61,13 @@ class UpdateDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(15)
         
-        self.btn_later = QPushButton("Actualizar más tarde")
+        self.btn_later = QPushButton(t("Actualizar más tarde"))
         self.btn_later.setObjectName("UpdateLaterBtn")
         self.btn_later.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_later.setFixedHeight(38)
         self.btn_later.clicked.connect(self.reject)
         
-        self.btn_now = QPushButton("Actualizar ahora")
+        self.btn_now = QPushButton(t("Actualizar ahora"))
         self.btn_now.setObjectName("UpdateNowBtn")
         self.btn_now.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_now.setFixedHeight(38)
@@ -91,6 +94,12 @@ class UpdateDialog(QDialog):
             QDesktopServices.openUrl(QUrl(self.download_url))
             self.accept()
             return
+            
+        # Realizar respaldo automático preventivo de la base de datos de perfiles antes de actualizar
+        try:
+            create_database_backup(tag="pre_update")
+        except Exception as e:
+            print(f"Error realizando respaldo pre-actualización: {e}")
             
         # Ocultar botón "más tarde" y deshabilitar "actualizar ahora"
         self.btn_later.setEnabled(False)

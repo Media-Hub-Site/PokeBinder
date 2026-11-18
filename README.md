@@ -1,104 +1,95 @@
-# TCG Inventory Manager (v1.0)
+# 🎴 Pokémon TCG Inventory & Binder Manager
 
-Una aplicación de escritorio moderna y fluida desarrollada con **Python**, **PyQt6** y **SQLAlchemy** (SQLite) diseñada para catalogar y administrar inventarios de cartas coleccionables del Pokémon TCG.
-
----
-
-## 🌟 Características Principales
-
-* **Transiciones Premium:** Animación de destello blanco ("flash") coordinado y redimensionamiento dinámico y centrado de la ventana al cambiar del inicio de sesión a la pantalla principal.
-* **Efectos Micro-Interactivos:** Animación de burbuja expansiva y desvanecimiento al seleccionar cualquier carta en la galería.
-* **Persistencia de Ajustes en Tiempo Real:** Configuración persistente de audio (música/efectos), activación de animaciones, tamaño de fuente dinámico y alternancia de tema Claro/Oscuro guardados en un archivo JSON.
-* **Actualizador Automático:** Chequeo en segundo plano conectado a la API de GitHub Releases. Si detecta una nueva versión, muestra un diálogo integrado con las notas de la versión, descarga el nuevo instalador en segundo plano y lo ejecuta al cerrar la app.
-* **Base de Datos Local Optimizada:** Integración segura con SQLAlchemy y SQLite con cierre automático de sesiones inactivas.
+Una aplicación de escritorio moderna y avanzada desarrollada con **PyQt6** y **Python** para gestionar tu colección de cartas Pokémon TCG, organizar álbumes (binders) interactivos de formato personalizable y explorar más de **95,000 cartas en 6 idiomas** con renderizado 3D físico interactivo.
 
 ---
 
-## 🚀 Instalación y Desarrollo Local
+## ✨ Características Principales
 
-### Requisitos Previos
-* Python 3.11 o posterior instalado en el sistema.
+- **🌍 Catálogo Multilenguaje Completo (95,000+ Cartas)**:
+  - Soporte integrado para cartas de **TCGDex** y **PokéAPI** en 6 idiomas: Español 🇪🇸, Inglés 🇬🇧, Japonés 🇯🇵, Francés 🇫🇷, Portugués 🇵🇹 y Chino 🇨🇳.
+  - Filtros de búsqueda avanzada por nombre, rareza, tipo, edición, etapa e **idioma**.
 
-### Configuración del Entorno
-1. Clona este repositorio en tu máquina local.
-2. Crea e inicia un entorno virtual de Python:
-   ```powershell
-   # En Windows (PowerShell)
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
+- **🎴 Visor 3D Físico e Interactivo con Efectos Holográficos**:
+  - Inclinación 3D realista por física de inercia y ratón sin recortes de bordes.
+  - Reversa personalizada (`assets/icons/carta.jpg`).
+  - Carga y renderizado dinámico en **Alta Definición (Full HD)** con indicador visual en tiempo real.
+
+- **📖 Binders (Álbumes) Interactivos y Personalizables**:
+  - Modalidades de página personalizables: **2x2, 3x3, 3x4 y 4x4**.
+  - **Drag & Drop**: Arrastra y suelta cartas fácilmente desde tu colección hacia cualquier posición del Binder.
+  - **Selección Múltiple y Botón "Quitar"**: Selecciona una o varias cartas en el Binder y quítalas de la carpeta sin borrarlas de tu colección personal.
+  - Insignia de idioma (`ES 🇪🇸`, `JA 🇯🇵`, etc.) al lado de cada carta en la barra lateral.
+
+- **⚡ Motor de Imágenes `.webp` de Alto Rendimiento**:
+  - Conversión e integración nativa con `Pillow` (calidad 85-90%).
+  - Ahorro de espacio en disco del 85-90% por imagen (imágenes livianas de ~50-70 KB).
+
+---
+
+## 🛠️ Requisitos del Sistema
+
+- **Sistema Operativo**: Windows 10 / 11 (64-bit).
+- **Python**: v3.10 o superior.
+
+---
+
+## 🚀 Instalación y Uso Local
+
+1. **Clonar el repositorio**:
+   ```bash
+   git clone https://github.com/tu-usuario/TCG-Inventory.git
+   cd TCG-Inventory-appSystem
    ```
-3. Instala las dependencias necesarias:
+
+2. **Crear y activar el entorno virtual**:
+   ```bash
+   python -m venv venv
+   # En Windows:
+   venv\Scripts\activate
+   ```
+
+3. **Instalar dependencias**:
    ```bash
    pip install -r requirements.txt
    ```
-4. Ejecuta la aplicación:
+
+4. **Ejecutar la aplicación**:
    ```bash
    python main.py
    ```
 
 ---
 
-## 📦 Compilación y Distribución (Windows)
+## 📦 Compilación a Ejecutable (PyInstaller)
 
-### 1. Crear el Ejecutable con PyInstaller
-Para compilar la aplicación en un paquete independiente ejecutable, incluyendo los sonidos, iconos y estilos, pero **excluyendo la carpeta de imágenes** (para que el ejecutable no pese 250MB):
+Para generar la versión ejecutable independiente lista para ser distribuida o integrada con **Inno Setup**:
 
-```powershell
-pyinstaller --noconsole --name "TCG_Inventory" --add-data "assets/sounds;assets/sounds" --add-data "assets/icons;assets/icons" --add-data "assets/style.qss;assets" --add-data "assets/style_dark.qss;assets" --add-data "PokeDatabase.db;." main.py
+```bash
+pyinstaller --noconfirm --onedir --windowed ^
+  --name "TCG-Inventory" ^
+  --icon "assets/icons/icono.ico" ^
+  --add-data "assets;assets" ^
+  --add-data "PokeDatabase.db;." ^
+  main.py
 ```
-Esto creará el ejecutable y sus recursos dentro de la carpeta `dist/TCG_Inventory`.
+
+La carpeta compilada se generará en `dist/TCG-Inventory/`.
 
 ---
 
-## 🖼️ Gestión y Descarga de las Imágenes (Modo Offline)
+## 🛠️ Empaquetado con Inno Setup
 
-Dado que las imágenes de las cartas (WebP/PNG) superan los **250 MB** (más de 19,000 archivos), **no se deben subir al repositorio de GitHub**. En su lugar, el instalador de **Inno Setup** las descarga y descomprime automáticamente al instalar el software.
+Para convertir la carpeta `dist/TCG-Inventory/` en un instalador ejecutable `.exe` para Windows:
 
-### Paso 1: Subir las Imágenes a GitHub Releases
-1. Comprime tu carpeta `assets/images` en un archivo llamado `images.zip`.
-2. Cuando publiques tu Release `v1.0` en GitHub, adjunta el archivo `images.zip` y el ejecutable del instalador compilado como assets de la release. Tu enlace de descarga directo será:
-   `https://github.com/Alan-Dave/TCG-Inventory/releases/download/v1.0/images.zip`
+1. Instala **Inno Setup 6**.
+2. Selecciona `dist/TCG-Inventory/TCG-Inventory.exe` como el archivo ejecutable principal.
+3. Agrega todos los archivos y subcarpetas contenidos en `dist/TCG-Inventory/`.
+4. Define el destino de instalación en `{autopf}\TCG Inventory System`.
+5. Compila el script de Inno Setup para generar el instalador ejecutable final.
 
-### Paso 2: Configurar Inno Setup con Descarga Automática
-Utiliza el siguiente script de Inno Setup (`installer.iss`) incorporando el plugin `Inno Download Plugin` (IDP) para automatizar la descarga y descompresión del paquete de imágenes durante la instalación:
+---
 
-```pascal
-[Setup]
-AppName=TCG Inventory Manager
-AppVersion=1.0
-DefaultDirName={autopf}\TCG Inventory Manager
-DefaultGroupName=TCG Inventory Manager
-OutputDir=Output
-OutputBaseFilename=TCG_Inventory_Installer
+## 📝 Licencia
 
-#include <idp.iss>
-
-[Files]
-; Copiar los archivos compilados de PyInstaller
-Source: "dist\TCG_Inventory\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
-
-[Dirs]
-; Crear el directorio destino de imágenes
-Name: "{app}\assets\images"
-
-[Code]
-procedure InitializeWizard;
-begin
-  // Descargar el zip de imágenes directamente desde los Assets de tu Release de GitHub
-  idpAddFile('https://github.com/Alan-Dave/TCG-Inventory/releases/download/v1.0/images.zip', ExpandConstant('{tmp}\images.zip'));
-  idpDownloadAfter(wpReady);
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ResultCode: Integer;
-begin
-  if CurStep = ssInstall then
-  begin
-    // Extraer el zip de imágenes usando PowerShell nativo de Windows silenciosamente
-    Exec('powershell.exe', 
-         ExpandConstant('-Command "Expand-Archive -Path ''{tmp}\images.zip'' -DestinationPath ''{app}\assets\images'' -Force"'), 
-         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  end;
-end;
-```
+Este proyecto se distribuye bajo la licencia MIT.

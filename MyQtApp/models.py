@@ -16,7 +16,8 @@ class Cartas(Base):
     __tablename__ = "Cartas"
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
-    id_api = Column(String, unique=True, nullable=False)
+    id_api = Column(String, nullable=False)
+    idioma = Column(String, default="es", nullable=False)
     nombre = Column(String, nullable=False)
     type = Column(String)
     price = Column(Float)
@@ -28,6 +29,11 @@ class Cartas(Base):
     especial_type = Column(String)
     trainer = Column(String)
     edition = Column(String)
+    variantes_disponibles = Column(String, default="normal,reverse,holo")
+
+    __table_args__ = (
+        UniqueConstraint('id_api', 'idioma', name='uix_id_api_idioma'),
+    )
 
     usuarios = relationship("UsuarioCarta", back_populates="carta", cascade="all, delete")
 
@@ -38,9 +44,35 @@ class UsuarioCarta(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     usuario_nombre = Column(String, ForeignKey("Usuarios.nombre", ondelete="CASCADE"), nullable=False)
     carta_id = Column(String, ForeignKey("Cartas.id_api", ondelete="CASCADE"), nullable=False)
-    # nombre_pokemon = Column(String)  # solo info adicional
+    idioma = Column(String, default="es", nullable=False)
+    variante = Column(String, default="Normal", nullable=False)
 
     usuario = relationship("Usuarios", back_populates="cartas", foreign_keys=[usuario_nombre])
     carta = relationship("Cartas", back_populates="usuarios", foreign_keys=[carta_id])
+
+
+class Mazo(Base):
+    __tablename__ = "Mazo"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    usuario_nombre = Column(String, ForeignKey("Usuarios.nombre", ondelete="CASCADE"), nullable=False)
+    nombre = Column(String, nullable=False)
+
+    cartas = relationship("MazoCarta", back_populates="mazo", cascade="all, delete-orphan")
+
+
+class MazoCarta(Base):
+    __tablename__ = "MazoCarta"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    mazo_id = Column(Integer, ForeignKey("Mazo.id", ondelete="CASCADE"), nullable=False)
+    id_api = Column(String, nullable=False)
+    nombre_carta = Column(String, nullable=False)
+    cantidad = Column(Integer, default=1, nullable=False)
+    idioma = Column(String, default="es", nullable=False)
+    edition = Column(String)
+
+    mazo = relationship("Mazo", back_populates="cartas")
+
 
 # Las tablas se crean desde main.py
