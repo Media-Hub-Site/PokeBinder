@@ -16,6 +16,7 @@ PROJECT_ROOT = BUNDLE_DIR
 # Carpetas de assets estáticos (empaquetados con el exe)
 ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
 ICONS_DIR = os.path.join(ASSETS_DIR, "icons")
+PERFIL_DIR = os.path.join(ASSETS_DIR, "perfil")
 SOUNDS_DIR = os.path.join(ASSETS_DIR, "sounds")
 STYLE_FILE = os.path.join(ASSETS_DIR, "style.qss")
 STYLE_DARK_FILE = os.path.join(ASSETS_DIR, "style_dark.qss")

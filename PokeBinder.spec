@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('assets/sounds', 'assets/sounds'),
     ('assets/icons', 'assets/icons'),
+    ('assets/perfil', 'assets/perfil'),
     ('assets/style.qss', 'assets'),
     ('assets/style_dark.qss', 'assets'),
     ('assets/card_back.png', 'assets'),

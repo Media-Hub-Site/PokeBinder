@@ -9,26 +9,57 @@ from PyQt6.QtGui import QPixmap, QPainter, QPainterPath, QColor, QFont
 from ..session import SessionLocal
 from ..models import Usuarios
 from MyQtApp.i18n import t, language_manager
-from MyQtApp.config import PROJECT_ROOT, ICONS_DIR
+from MyQtApp.config import PROJECT_ROOT, BUNDLE_DIR, EXE_DIR, ICONS_DIR, PERFIL_DIR
+
+
+def resolve_avatar_path(image_path: str | None) -> str | None:
+    """Resuelve la ruta absoluta del avatar considerando modo dev y ejecutable empaquetado."""
+    if not image_path:
+        return None
+    if os.path.isabs(image_path) and os.path.exists(image_path):
+        return image_path
+
+    candidates = [
+        os.path.join(BUNDLE_DIR, image_path),
+        os.path.join(EXE_DIR, image_path),
+        os.path.join(PROJECT_ROOT, image_path),
+    ]
+
+    fname = os.path.basename(image_path)
+    candidates.extend([
+        os.path.join(PERFIL_DIR, fname),
+        os.path.join(EXE_DIR, "assets", "perfil", fname),
+        os.path.join(BUNDLE_DIR, "assets", "perfil", fname),
+    ])
+
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+
+    return None
 
 
 def get_circular_avatar(image_path: str | None, size: int = 46) -> QPixmap:
     """Genera un avatar circular recortado a partir de una ruta o el logo por defecto."""
     pixmap = None
-    if image_path:
-        full_path = image_path
-        if not os.path.isabs(full_path):
-            full_path = os.path.join(PROJECT_ROOT, image_path)
-        if os.path.exists(full_path):
-            pixmap = QPixmap(full_path)
+    resolved = resolve_avatar_path(image_path)
+    if resolved:
+        pixmap = QPixmap(resolved)
 
     if not pixmap or pixmap.isNull():
-        default_icon = os.path.join(ICONS_DIR, "TCG_Logo.png")
-        if os.path.exists(default_icon):
-            pixmap = QPixmap(default_icon)
-        else:
-            pixmap = QPixmap(size, size)
-            pixmap.fill(QColor("#f7a8b8"))
+        fallback_candidates = [
+            os.path.join(ICONS_DIR, "TCG_Logo.png"),
+            os.path.join(BUNDLE_DIR, "assets", "icons", "TCG_Logo.png"),
+            os.path.join(EXE_DIR, "assets", "icons", "TCG_Logo.png"),
+        ]
+        for fb in fallback_candidates:
+            if os.path.exists(fb):
+                pixmap = QPixmap(fb)
+                break
+
+    if not pixmap or pixmap.isNull():
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor("#f7a8b8"))
 
     result = QPixmap(size, size)
     result.fill(Qt.GlobalColor.transparent)

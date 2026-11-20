@@ -7,7 +7,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QPainterPath, QColor, QIcon
 import os
 import hashlib
-from MyQtApp.config import STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings, DEFAULT_SETTINGS, get_available_music_tracks, PROJECT_ROOT, ICONS_DIR
+from MyQtApp.config import (
+    STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings,
+    DEFAULT_SETTINGS, get_available_music_tracks, PROJECT_ROOT,
+    BUNDLE_DIR, EXE_DIR, ICONS_DIR, PERFIL_DIR
+)
 from MyQtApp.i18n import t, language_manager
 from MyQtApp.app.backup import create_database_backup, list_backups, restore_database_backup
 from MyQtApp.session import SessionLocal
@@ -38,22 +42,56 @@ PRESET_AVATARS = [
 ]
 
 
+def resolve_avatar_path(image_path: str | None) -> str | None:
+    """Resuelve la ruta absoluta del avatar considerando modo dev y ejecutable empaquetado."""
+    if not image_path:
+        return None
+    if os.path.isabs(image_path) and os.path.exists(image_path):
+        return image_path
+
+    # Posibles raíces donde buscar rutas relativas
+    candidates = [
+        os.path.join(BUNDLE_DIR, image_path),
+        os.path.join(EXE_DIR, image_path),
+        os.path.join(PROJECT_ROOT, image_path),
+    ]
+
+    # Si es nombre de archivo directo dentro de assets/perfil
+    fname = os.path.basename(image_path)
+    candidates.extend([
+        os.path.join(PERFIL_DIR, fname),
+        os.path.join(EXE_DIR, "assets", "perfil", fname),
+        os.path.join(BUNDLE_DIR, "assets", "perfil", fname),
+    ])
+
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+
+    return None
+
+
 def _get_circular_avatar(image_path: str | None, size: int = 56) -> QPixmap:
     pixmap = None
-    if image_path:
-        full_path = image_path
-        if not os.path.isabs(full_path):
-            full_path = os.path.join(PROJECT_ROOT, image_path)
-        if os.path.exists(full_path):
-            pixmap = QPixmap(full_path)
+    resolved = resolve_avatar_path(image_path)
+    if resolved:
+        pixmap = QPixmap(resolved)
 
     if not pixmap or pixmap.isNull():
-        default_icon = os.path.join(ICONS_DIR, "TCG_Logo.png")
-        if os.path.exists(default_icon):
-            pixmap = QPixmap(default_icon)
-        else:
-            pixmap = QPixmap(size, size)
-            pixmap.fill(QColor("#f7a8b8"))
+        # Intentar logo de fallback en bundle o exe
+        fallback_candidates = [
+            os.path.join(ICONS_DIR, "TCG_Logo.png"),
+            os.path.join(BUNDLE_DIR, "assets", "icons", "TCG_Logo.png"),
+            os.path.join(EXE_DIR, "assets", "icons", "TCG_Logo.png"),
+        ]
+        for fb in fallback_candidates:
+            if os.path.exists(fb):
+                pixmap = QPixmap(fb)
+                break
+
+    if not pixmap or pixmap.isNull():
+        pixmap = QPixmap(size, size)
+        pixmap.fill(QColor("#f7a8b8"))
 
     result = QPixmap(size, size)
     result.fill(Qt.GlobalColor.transparent)
