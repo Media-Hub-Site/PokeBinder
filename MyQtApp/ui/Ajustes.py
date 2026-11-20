@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QGridLayout, QLineEdit, QFileDialog, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPixmap, QPainter, QPainterPath, QColor
+from PyQt6.QtGui import QFont, QPixmap, QPainter, QPainterPath, QColor, QIcon
 import os
 import hashlib
 from MyQtApp.config import STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings, DEFAULT_SETTINGS, get_available_music_tracks, PROJECT_ROOT, ICONS_DIR
@@ -119,7 +119,7 @@ class AvatarPickerDialog(QDialog):
             btn.setToolTip(name)
 
             pix = _get_circular_avatar(path, size=70)
-            btn.setIcon(pix)
+            btn.setIcon(QIcon(pix))
             btn.setIconSize(pix.size())
 
             is_selected = (self.selected_path == path)
