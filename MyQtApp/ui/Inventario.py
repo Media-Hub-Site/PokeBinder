@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QScrollArea, QGridLayout,
     QHBoxLayout, QLineEdit, QComboBox, QPushButton, QGraphicsOpacityEffect,
-    QSizePolicy
+    QSizePolicy, QDialog, QInputDialog, QMessageBox
 )
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl, QEasingCurve
@@ -102,6 +102,20 @@ class GaleriaCartasInventario(QWidget):
         self.combo_idioma.currentIndexChanged.connect(self.reset_page_and_actualizar)
         row2.addWidget(self.combo_idioma, stretch=1)
 
+        # Filtro de Categoría de Usuario
+        self.combo_categoria = QComboBox()
+        self.combo_categoria.setProperty("class", "FilterCombo")
+        self.combo_categoria.addItem(f"{t('Categoría')}: {t('Todas')}", None)
+        self.combo_categoria.currentIndexChanged.connect(self.reset_page_and_actualizar)
+        row2.addWidget(self.combo_categoria, stretch=1)
+
+        # Botón para Crear / Administrar Categorías
+        self.btn_nueva_cat = QPushButton(f"🏷️ +{t('Categoría')}")
+        self.btn_nueva_cat.setProperty("class", "CleanBtn")
+        self.btn_nueva_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_nueva_cat.clicked.connect(self.abrir_creador_categorias)
+        row2.addWidget(self.btn_nueva_cat)
+
         header_vbox.addLayout(row2)
         self.main_layout.addLayout(header_vbox)
 
@@ -158,6 +172,134 @@ class GaleriaCartasInventario(QWidget):
             for val in valores:
                 combo.addItem(val)
 
+        self.cargar_categorias_combo()
+
+    def cargar_categorias_combo(self):
+        from MyQtApp.app.db_services import obtener_categorias_usuario
+        self.combo_categoria.blockSignals(True)
+        current = self.combo_categoria.currentText()
+        self.combo_categoria.clear()
+        self.combo_categoria.addItem(f"{t('Categoría')}: {t('Todas')}", None)
+        cats = obtener_categorias_usuario(self.nombre_usuario)
+        for cat in cats:
+            self.combo_categoria.addItem(cat, cat)
+        # Reestablecer selección previa si aún existe
+        idx = self.combo_categoria.findText(current)
+        if idx >= 0:
+            self.combo_categoria.setCurrentIndex(idx)
+        else:
+            self.combo_categoria.setCurrentIndex(0)
+        self.combo_categoria.blockSignals(False)
+
+    def abrir_creador_categorias(self):
+        from MyQtApp.app.db_services import obtener_categorias_usuario, crear_categoria_usuario, eliminar_categoria_usuario
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Gestionar Categorías"))
+        dlg.setFixedSize(360, 320)
+        dlg.setStyleSheet("""
+            QDialog {
+                background-color: #fff5f7;
+            }
+            QLabel {
+                font-weight: 600;
+                color: #5a2a3a;
+            }
+            QLineEdit {
+                border: 1.5px solid #f29ca4;
+                border-radius: 8px;
+                padding: 6px;
+                background-color: white;
+            }
+            QComboBox {
+                border: 1.5px solid #f29ca4;
+                border-radius: 8px;
+                padding: 4px;
+                background-color: white;
+            }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel(t("Crear nueva categoría:")))
+        txt_nueva = QLineEdit()
+        txt_nueva.setPlaceholderText(t("Nombre de categoría (ej: Favoritas, Charizards...)"))
+        layout.addWidget(txt_nueva)
+
+        btn_crear = QPushButton(f"✨ {t('Crear Categoría')}")
+        btn_crear.setProperty("class", "pill")
+        btn_crear.setFixedHeight(32)
+        btn_crear.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_crear)
+
+        layout.addSpacing(10)
+        layout.addWidget(QLabel(t("Categorías existentes:")))
+        combo_existentes = QComboBox()
+        layout.addWidget(combo_existentes)
+
+        btn_eliminar_cat = QPushButton(f"🗑️ {t('Eliminar Categoría Seleccionada')}")
+        btn_eliminar_cat.setProperty("class", "pill")
+        btn_eliminar_cat.setFixedHeight(30)
+        btn_eliminar_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_eliminar_cat)
+
+        def refrescar_dialog_combo():
+            combo_existentes.clear()
+            cats = obtener_categorias_usuario(self.nombre_usuario)
+            if not cats:
+                combo_existentes.addItem(t("No tienes categorías creadas"))
+                btn_eliminar_cat.setEnabled(False)
+            else:
+                btn_eliminar_cat.setEnabled(True)
+                for c in cats:
+                    combo_existentes.addItem(c)
+
+        refrescar_dialog_combo()
+
+        def on_crear():
+            nombre = txt_nueva.text().strip()
+            if not nombre:
+                QMessageBox.warning(dlg, t("Error"), t("Ingresa un nombre para la categoría."))
+                return
+            if crear_categoria_usuario(self.nombre_usuario, nombre):
+                txt_nueva.clear()
+                refrescar_dialog_combo()
+                self.cargar_categorias_combo()
+                show_toast(f"Categoría '{nombre}' creada", "info")
+            else:
+                QMessageBox.warning(dlg, t("Error"), t("Ya existe una categoría con ese nombre."))
+
+        def on_eliminar():
+            nombre = combo_existentes.currentText()
+            if not nombre or nombre == t("No tienes categorías creadas"):
+                return
+            resp = QMessageBox.question(
+                dlg,
+                t("Eliminar Categoría"),
+                f"{t('¿Deseas eliminar la categoría')} '{nombre}'? {t('Las cartas seguirán en tu colección pero ya no pertenecerán a esta categoría.')}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if resp == QMessageBox.StandardButton.Yes:
+                eliminar_categoria_usuario(self.nombre_usuario, nombre)
+                refrescar_dialog_combo()
+                self.cargar_categorias_combo()
+                self.reset_page_and_actualizar()
+                show_toast(f"Categoría '{nombre}' eliminada", "info")
+
+        btn_crear.clicked.connect(on_crear)
+        btn_eliminar_cat.clicked.connect(on_eliminar)
+
+        btn_cerrar = QPushButton(t("Cerrar"))
+        btn_cerrar.setProperty("class", "pill")
+        btn_cerrar.setFixedHeight(32)
+        btn_cerrar.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cerrar.clicked.connect(dlg.accept)
+        layout.addStretch()
+        layout.addWidget(btn_cerrar)
+
+        dlg.exec()
+
     def limpiar_filtros(self):
         self.buscador.blockSignals(True)
         self.buscador.clear()
@@ -172,6 +314,11 @@ class GaleriaCartasInventario(QWidget):
             self.combo_idioma.blockSignals(True)
             self.combo_idioma.setCurrentIndex(0)
             self.combo_idioma.blockSignals(False)
+
+        if hasattr(self, 'combo_categoria'):
+            self.combo_categoria.blockSignals(True)
+            self.combo_categoria.setCurrentIndex(0)
+            self.combo_categoria.blockSignals(False)
 
         self.reset_page_and_actualizar()
 
@@ -197,6 +344,11 @@ class GaleriaCartasInventario(QWidget):
         selected_lang = self.combo_idioma.currentData()
         if selected_lang:
             q = q.filter(Cartas.idioma == selected_lang)
+
+        if hasattr(self, 'combo_categoria'):
+            selected_cat = self.combo_categoria.currentData()
+            if selected_cat:
+                q = q.filter(UsuarioCarta.categoria == selected_cat)
 
         texto = self.buscador.text().lower().strip()
         if texto:
@@ -247,6 +399,11 @@ class GaleriaCartasInventario(QWidget):
         selected_lang = self.combo_idioma.currentData()
         if selected_lang:
             q = q.filter(Cartas.idioma == selected_lang)
+
+        if hasattr(self, 'combo_categoria'):
+            selected_cat = self.combo_categoria.currentData()
+            if selected_cat:
+                q = q.filter(UsuarioCarta.categoria == selected_cat)
 
         if texto:
             q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))

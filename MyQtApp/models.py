@@ -48,9 +48,22 @@ class UsuarioCarta(Base):
     carta_id = Column(String, ForeignKey("Cartas.id_api", ondelete="CASCADE"), nullable=False)
     idioma = Column(String, default="es", nullable=False)
     variante = Column(String, default="Normal", nullable=False)
+    categoria = Column(String, nullable=True)
 
     usuario = relationship("Usuarios", back_populates="cartas", foreign_keys=[usuario_nombre])
     carta = relationship("Cartas", back_populates="usuarios", foreign_keys=[carta_id])
+
+
+class Categoria(Base):
+    __tablename__ = "Categoria"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    usuario_nombre = Column(String, ForeignKey("Usuarios.nombre", ondelete="CASCADE"), nullable=False)
+    nombre = Column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('usuario_nombre', 'nombre', name='uix_usuario_categoria'),
+    )
 
 
 class Mazo(Base):

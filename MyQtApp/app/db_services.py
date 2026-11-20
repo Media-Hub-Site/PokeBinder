@@ -1,11 +1,12 @@
 from sqlalchemy.exc import IntegrityError
 from MyQtApp.session import SessionLocal
-from MyQtApp.models import UsuarioCarta, Cartas
+from MyQtApp.models import UsuarioCarta, Cartas, Categoria
 
-def agregar_cartas_usuario(usuario_nombre, cartas_info):
+def agregar_cartas_usuario(usuario_nombre, cartas_info, categoria=None):
     """
     Agrega una lista de cartas a un usuario específico indicando su id_api e idioma.
     cartas_info puede ser una lista de dicts [{'id_api': ..., 'idioma': ...}], tuplas (id_api, idioma), o cadenas id_api.
+    categoria: nombre opcional de la categoría asignada.
     Retorna la cantidad de cartas agregadas con éxito.
     """
     exitos = 0
@@ -15,12 +16,15 @@ def agregar_cartas_usuario(usuario_nombre, cartas_info):
             if isinstance(item, dict):
                 carta_id = item.get("id_api")
                 idioma = item.get("idioma", "es")
+                item_cat = item.get("categoria", categoria)
             elif isinstance(item, (tuple, list)):
                 carta_id = item[0]
                 idioma = item[1] if len(item) > 1 else "es"
+                item_cat = categoria
             else:
                 carta_id = str(item)
                 idioma = "es"
+                item_cat = categoria
 
             if not carta_id:
                 continue
@@ -31,9 +35,18 @@ def agregar_cartas_usuario(usuario_nombre, cartas_info):
             ).first()
             
             if not existe:
-                nueva_carta = UsuarioCarta(usuario_nombre=usuario_nombre, carta_id=carta_id, idioma=idioma)
+                nueva_carta = UsuarioCarta(
+                    usuario_nombre=usuario_nombre,
+                    carta_id=carta_id,
+                    idioma=idioma,
+                    categoria=item_cat
+                )
                 session.add(nueva_carta)
                 exitos += 1
+            else:
+                # Si ya existía y se seleccionó una categoría, actualizarla si no tenía o si se especificó
+                if item_cat and not existe.categoria:
+                    existe.categoria = item_cat
                 
         session.commit()
     except Exception as e:
@@ -43,6 +56,54 @@ def agregar_cartas_usuario(usuario_nombre, cartas_info):
         session.close()
         
     return exitos
+
+
+def obtener_categorias_usuario(usuario_nombre):
+    """Retorna la lista de nombres de categorías creadas por el usuario."""
+    session = SessionLocal()
+    try:
+        cats = session.query(Categoria.nombre).filter_by(usuario_nombre=usuario_nombre).order_by(Categoria.nombre.asc()).all()
+        return [c[0] for c in cats]
+    finally:
+        session.close()
+
+
+def crear_categoria_usuario(usuario_nombre, nombre_categoria):
+    """Crea una nueva categoría para el usuario si no existe."""
+    nombre = nombre_categoria.strip()
+    if not nombre:
+        return False
+    session = SessionLocal()
+    try:
+        existe = session.query(Categoria).filter_by(usuario_nombre=usuario_nombre, nombre=nombre).first()
+        if not existe:
+            cat = Categoria(usuario_nombre=usuario_nombre, nombre=nombre)
+            session.add(cat)
+            session.commit()
+            return True
+        return False
+    except Exception as e:
+        session.rollback()
+        print(f"Error al crear categoría: {e}")
+        return False
+    finally:
+        session.close()
+
+
+def eliminar_categoria_usuario(usuario_nombre, nombre_categoria):
+    """Elimina una categoría del usuario y desvincula las cartas de esa categoría."""
+    session = SessionLocal()
+    try:
+        session.query(Categoria).filter_by(usuario_nombre=usuario_nombre, nombre=nombre_categoria).delete()
+        session.query(UsuarioCarta).filter_by(usuario_nombre=usuario_nombre, categoria=nombre_categoria).update({"categoria": None})
+        session.commit()
+        return True
+    except Exception as e:
+        session.rollback()
+        print(f"Error al eliminar categoría: {e}")
+        return False
+    finally:
+        session.close()
 
 def eliminar_cartas_usuario(usuario_nombre, cartas_info):
     """

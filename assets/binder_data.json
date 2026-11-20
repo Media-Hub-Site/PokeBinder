@@ -65,6 +65,76 @@
             }
         },
         "3x4": {},
-        "4x4": {}
+        "4x4": {},
+        "folders": {
+            "default": {
+                "name": "Mi Carpeta",
+                "color": "#ffeef2",
+                "design": "Cl\u00e1sico Rosa",
+                "mode": "3x3",
+                "cards": {
+                    "2x2": {},
+                    "3x3": {
+                        "0_3": {
+                            "id_api": "sm3-1",
+                            "idioma": "es",
+                            "variante": "Holo"
+                        },
+                        "0_4": {
+                            "id_api": "sm9-2",
+                            "idioma": "es",
+                            "variante": "Normal"
+                        },
+                        "0_1": {
+                            "id_api": "ex12-1",
+                            "idioma": "en",
+                            "variante": "Normal"
+                        },
+                        "0_2": {
+                            "id_api": "dp3-1",
+                            "idioma": "en",
+                            "variante": "Normal"
+                        },
+                        "0_0": {
+                            "id_api": "dp3-1",
+                            "idioma": "en",
+                            "variante": "Normal"
+                        },
+                        "0_6": {
+                            "id_api": "bw9-64",
+                            "idioma": "en",
+                            "variante": "Normal"
+                        },
+                        "0_7": {
+                            "id_api": "hgss3-10",
+                            "idioma": "en",
+                            "variante": "Holo"
+                        },
+                        "0_8": {
+                            "id_api": "hgss3-10",
+                            "idioma": "en",
+                            "variante": "Holo"
+                        },
+                        "0_5": {
+                            "id_api": "bw6-106",
+                            "idioma": "en",
+                            "variante": "Normal"
+                        },
+                        "1_0": {
+                            "id_api": "bw6-106",
+                            "idioma": "es",
+                            "variante": "Normal"
+                        },
+                        "1_1": {
+                            "id_api": "bw6-106",
+                            "idioma": "pt",
+                            "variante": "Normal"
+                        }
+                    },
+                    "3x4": {},
+                    "4x4": {}
+                }
+            }
+        }
     }
 }

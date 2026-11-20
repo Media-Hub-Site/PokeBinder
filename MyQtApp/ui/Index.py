@@ -1,7 +1,8 @@
 import random
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QLabel,
-    QMessageBox, QStackedWidget, QSpacerItem, QSizePolicy, QGraphicsOpacityEffect
+    QMessageBox, QStackedWidget, QSpacerItem, QSizePolicy, QGraphicsOpacityEffect,
+    QDialog, QComboBox
 )
 from PyQt6.QtCore import Qt, QUrl, QPropertyAnimation, QEasingCurve, QPoint, QByteArray, pyqtSignal
 from PyQt6.QtGui import QFont, QIcon, QPixmap
@@ -392,17 +393,94 @@ class MainWindow(QWidget):
         cartas_seleccionadas = galeria_busqueda.get_cartas_seleccionadas()
 
         if not cartas_seleccionadas:
-            self.mostrar_mensaje("Selecciona al menos una carta para agregar.")
+            self.mostrar_mensaje(t("Selecciona al menos una carta para agregar."))
             return
 
-        exitos = agregar_cartas_usuario(self.usuario, cartas_seleccionadas)
+        from MyQtApp.app.db_services import obtener_categorias_usuario
+        categorias_existentes = obtener_categorias_usuario(self.usuario)
+        categoria_elegida = None
+
+        if categorias_existentes:
+            dlg = QDialog(self)
+            dlg.setWindowTitle(t("Agregar a una Categoría?"))
+            dlg.setFixedSize(360, 180)
+            dlg.setStyleSheet("""
+                QDialog {
+                    background-color: #fff5f7;
+                }
+                QLabel {
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #5a2a3a;
+                }
+                QComboBox {
+                    border: 1.5px solid #f29ca4;
+                    border-radius: 8px;
+                    padding: 6px;
+                    background-color: white;
+                    font-size: 12px;
+                }
+            """)
+
+            dlg_layout = QVBoxLayout(dlg)
+            dlg_layout.setContentsMargins(20, 20, 20, 20)
+            dlg_layout.setSpacing(14)
+
+            lbl = QLabel(f"<b>{t('Agregar a una Categoría?')}</b>")
+            dlg_layout.addWidget(lbl)
+
+            combo_cat = QComboBox()
+            combo_cat.addItem(t("Colección (Sin categoría específica)"), None)
+            for cat in categorias_existentes:
+                combo_cat.addItem(f"🏷️  {cat}", cat)
+            dlg_layout.addWidget(combo_cat)
+
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(10)
+
+            btn_no = QPushButton(t("No gracias"))
+            btn_no.setProperty("class", "pill")
+            btn_no.setFixedHeight(34)
+            btn_no.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            btn_add = QPushButton(t("Agregar"))
+            btn_add.setProperty("class", "pill")
+            btn_add.setFixedHeight(34)
+            btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            def on_no():
+                dlg.done(2)
+
+            def on_add():
+                dlg.done(1)
+
+            btn_no.clicked.connect(on_no)
+            btn_add.clicked.connect(on_add)
+
+            btn_row.addWidget(btn_no)
+            btn_row.addWidget(btn_add)
+            dlg_layout.addLayout(btn_row)
+
+            res = dlg.exec()
+            if res == 0:
+                # El usuario cerró el diálogo con la X
+                return
+            elif res == 1:
+                categoria_elegida = combo_cat.currentData()
+            elif res == 2:
+                categoria_elegida = None
+
+        exitos = agregar_cartas_usuario(self.usuario, cartas_seleccionadas, categoria=categoria_elegida)
 
         if exitos:
             if hasattr(galeria_busqueda, 'limpiar_seleccion'):
                 galeria_busqueda.limpiar_seleccion()
-            self.mostrar_mensaje(f"✔️ Se han agregado {exitos} carta(s) a tu colección.")
+            msg_cat = f" en la categoría '{categoria_elegida}'" if categoria_elegida else ""
+            self.mostrar_mensaje(f"✔️ Se han agregado {exitos} carta(s) a tu colección{msg_cat}.")
             try:
                 inventario = self.paginas.widget(2)
+                if hasattr(inventario, 'cargar_categorias_combo'):
+                    inventario.cargar_categorias_combo()
                 if hasattr(inventario, 'reset_page_and_actualizar'):
                     inventario.reset_page_and_actualizar()
                 else:
