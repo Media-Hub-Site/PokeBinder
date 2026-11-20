@@ -8,6 +8,8 @@ class Usuarios(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
     nombre = Column(String, unique=True, nullable=False)
+    avatar = Column(String, nullable=True)
+    password_hash = Column(String, nullable=True)
 
     cartas = relationship("UsuarioCarta", back_populates="usuario", cascade="all, delete")
 

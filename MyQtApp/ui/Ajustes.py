@@ -1,14 +1,282 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QComboBox, QSizePolicy, QFrame, QApplication, QMessageBox,
-    QDialog, QListWidget, QListWidgetItem
+    QDialog, QListWidget, QListWidgetItem, QGridLayout, QLineEdit, QFileDialog
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap, QPainter, QPainterPath, QColor
 import os
-from MyQtApp.config import STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings, DEFAULT_SETTINGS, get_available_music_tracks
+import hashlib
+from MyQtApp.config import STYLE_FILE, STYLE_DARK_FILE, load_settings, save_settings, DEFAULT_SETTINGS, get_available_music_tracks, PROJECT_ROOT, ICONS_DIR
 from MyQtApp.i18n import t, language_manager
 from MyQtApp.app.backup import create_database_backup, list_backups, restore_database_backup
+from MyQtApp.session import SessionLocal
+from MyQtApp.models import Usuarios
+
+
+PRESET_AVATARS = [
+    ("Pikachu", "assets/images/en/pikachu_basep-1.webp"),
+    ("Charizard", "assets/images/en/charizard_dp3-3.webp"),
+    ("Gengar", "assets/images/en/gengar_base3-5.webp"),
+    ("Eevee", "assets/images/en/eevee_mcd19-12.webp"),
+    ("Mewtwo", "assets/images/en/mewtwo_basep-3.webp"),
+    ("Lucario", "assets/images/en/lucario_pop6-2.webp"),
+    ("Snorlax", "assets/images/en/snorlax_base2-11.webp"),
+    ("Squirtle", "assets/images/en/squirtle_bw10-14.webp"),
+    ("Bulbasaur", "assets/images/en/bulbasaur_det1-1.webp"),
+    ("Charmander", "assets/images/en/charmander_det1-4.webp"),
+    ("Jigglypuff", "assets/images/en/jigglypuff_basep-7.webp"),
+    ("Mew", "assets/images/en/mew_si1-1.webp"),
+]
+
+
+def _get_circular_avatar(image_path: str | None, size: int = 56) -> QPixmap:
+    pixmap = None
+    if image_path:
+        full_path = image_path
+        if not os.path.isabs(full_path):
+            full_path = os.path.join(PROJECT_ROOT, image_path)
+        if os.path.exists(full_path):
+            pixmap = QPixmap(full_path)
+
+    if not pixmap or pixmap.isNull():
+        default_icon = os.path.join(ICONS_DIR, "TCG_Logo.png")
+        if os.path.exists(default_icon):
+            pixmap = QPixmap(default_icon)
+        else:
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor("#f7a8b8"))
+
+    result = QPixmap(size, size)
+    result.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+
+    path = QPainterPath()
+    path.addEllipse(0, 0, size, size)
+    painter.setClipPath(path)
+
+    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+    ox = (scaled.width() - size) // 2
+    oy = (scaled.height() - size) // 2
+    painter.drawPixmap(0, 0, scaled, ox, oy, size, size)
+    painter.end()
+    return result
+
+
+class AvatarPickerDialog(QDialog):
+    """Diálogo para seleccionar un avatar Pokémon preset o subir una imagen personalizada."""
+
+    def __init__(self, current_avatar: str | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(t("Seleccionar Avatar de Perfil"))
+        self.setFixedSize(540, 480)
+        self.selected_path = current_avatar
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        header = QLabel(t("Elige un Avatar Pokémon o sube una imagen:"))
+        header.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        header.setStyleSheet("color: #a3364a;")
+        layout.addWidget(header)
+
+        # Grid de presets
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(12)
+
+        self.buttons = []
+        for idx, (name, path) in enumerate(PRESET_AVATARS):
+            r = idx // 4
+            c = idx % 4
+
+            btn = QPushButton()
+            btn.setFixedSize(96, 96)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(name)
+
+            pix = _get_circular_avatar(path, size=72)
+            btn.setIcon(pix)
+            btn.setIconSize(pix.size())
+
+            is_selected = (self.selected_path == path)
+            border_color = "#e25b70" if is_selected else "rgba(242, 156, 164, 0.4)"
+            bg_color = "rgba(242, 156, 164, 0.25)" if is_selected else "rgba(255, 255, 255, 0.8)"
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {bg_color};
+                    border: 2px solid {border_color};
+                    border-radius: 12px;
+                }}
+                QPushButton:hover {{
+                    border-color: #e25b70;
+                    background-color: rgba(242, 156, 164, 0.35);
+                }}
+            """)
+            btn.clicked.connect(lambda checked, p=path: self._select_preset(p))
+            grid.addWidget(btn, r, c)
+            self.buttons.append((btn, path))
+
+        layout.addWidget(grid_widget)
+
+        # Botón para cargar archivo personalizado
+        custom_layout = QHBoxLayout()
+        self.btn_upload = QPushButton(f"📁  {t('Subir Imagen Personalizada...')}")
+        self.btn_upload.setProperty("class", "pill")
+        self.btn_upload.setFixedHeight(34)
+        self.btn_upload.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_upload.clicked.connect(self._choose_custom_file)
+        custom_layout.addWidget(self.btn_upload)
+        custom_layout.addStretch()
+        layout.addLayout(custom_layout)
+
+        layout.addStretch()
+
+        # Botones de acción
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton(t("Cancelar"))
+        self.btn_cancel.setFixedHeight(34)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_apply = QPushButton(f"✔  {t('Aceptar')}")
+        self.btn_apply.setProperty("class", "pill")
+        self.btn_apply.setFixedHeight(34)
+        self.btn_apply.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_apply.clicked.connect(self.accept)
+
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_apply)
+        layout.addLayout(btn_layout)
+
+    def _select_preset(self, path: str):
+        self.selected_path = path
+        for btn, bpath in self.buttons:
+            is_selected = (bpath == path)
+            border_color = "#e25b70" if is_selected else "rgba(242, 156, 164, 0.4)"
+            bg_color = "rgba(242, 156, 164, 0.25)" if is_selected else "rgba(255, 255, 255, 0.8)"
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {bg_color};
+                    border: 2px solid {border_color};
+                    border-radius: 12px;
+                }}
+                QPushButton:hover {{
+                    border-color: #e25b70;
+                    background-color: rgba(242, 156, 164, 0.35);
+                }}
+            """)
+
+    def _choose_custom_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            t("Seleccionar Imagen de Avatar"),
+            "",
+            "Imágenes (*.png *.jpg *.jpeg *.webp *.bmp *.gif)"
+        )
+        if file_path:
+            self.selected_path = file_path
+            self.accept()
+
+
+class PasswordConfigDialog(QDialog):
+    """Diálogo para configurar, cambiar o eliminar la contraseña del perfil."""
+
+    def __init__(self, username: str, has_password: bool, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.has_password = has_password
+        self.remove_requested = False
+        self.new_password = None
+
+        self.setWindowTitle(t("Seguridad de la Cuenta"))
+        self.setFixedSize(380, 270 if has_password else 220)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel(f"🔐  {t('Contraseña para')} {username}")
+        title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        title.setStyleSheet("color: #a3364a;")
+        layout.addWidget(title)
+
+        if has_password:
+            layout.addWidget(QLabel(t("Contraseña actual:")))
+            self.txt_old_pwd = QLineEdit()
+            self.txt_old_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            self.txt_old_pwd.setPlaceholderText(t("Ingresa contraseña actual"))
+            self.txt_old_pwd.setFixedHeight(32)
+            layout.addWidget(self.txt_old_pwd)
+
+        layout.addWidget(QLabel(t("Nueva contraseña (deja vacío para eliminar):") if has_password else t("Nueva contraseña:")))
+        self.txt_new_pwd = QLineEdit()
+        self.txt_new_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_new_pwd.setPlaceholderText(t("Nueva contraseña"))
+        self.txt_new_pwd.setFixedHeight(32)
+        layout.addWidget(self.txt_new_pwd)
+
+        layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton(t("Cancelar"))
+        self.btn_cancel.setFixedHeight(34)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_save = QPushButton(f"💾  {t('Guardar')}")
+        self.btn_save.setProperty("class", "pill")
+        self.btn_save.setFixedHeight(34)
+        self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save.clicked.connect(self.on_save)
+
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_save)
+        layout.addLayout(btn_layout)
+
+    def on_save(self):
+        new_pwd = self.txt_new_pwd.text().strip()
+        db = SessionLocal()
+        try:
+            user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.username).first()
+            if not user:
+                QMessageBox.critical(self, "Error", t("Usuario no encontrado."))
+                return
+
+            if self.has_password:
+                old_pwd = self.txt_old_pwd.text().strip()
+                old_hash = hashlib.sha256(old_pwd.encode('utf-8')).hexdigest()
+                if user.password_hash and old_hash != user.password_hash:
+                    QMessageBox.warning(self, "Error", t("La contraseña actual es incorrecta."))
+                    return
+
+            if not new_pwd:
+                user.password_hash = None
+                db.commit()
+                self.remove_requested = True
+                QMessageBox.information(self, t("Éxito"), t("La contraseña ha sido eliminada. La cuenta ahora inicia sesión directamente."))
+            else:
+                user.password_hash = hashlib.sha256(new_pwd.encode('utf-8')).hexdigest()
+                db.commit()
+                self.new_password = new_pwd
+                QMessageBox.information(self, t("Éxito"), t("Contraseña actualizada con éxito."))
+
+            self.accept()
+        except Exception as e:
+            db.rollback()
+            QMessageBox.critical(self, "Error", f"Error al guardar contraseña: {e}")
+        finally:
+            db.close()
 
 
 def _make_divider():
@@ -195,10 +463,15 @@ class AjustesWidget(QWidget):
     card_size_changed = pyqtSignal(str)
     logout_requested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, usuario=None, parent=None):
         super().__init__(parent)
         self.setObjectName("ajustes_root")
+        self.usuario = usuario
         self.settings = load_settings()
+        self.user_avatar_path = None
+        self.user_has_password = False
+
+        self._load_user_profile_data()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
@@ -209,6 +482,55 @@ class AjustesWidget(QWidget):
         self.title_lbl.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         self.title_lbl.setStyleSheet("color: #a3364a;")
         root.addWidget(self.title_lbl)
+
+        # ───── Sección 0: Perfil de Usuario ────────────────────────────────────
+        if self.usuario:
+            prof_card, prof_layout, self.lbl_sec_perfil = _make_section_card(t("Perfil de Usuario"), "👤")
+
+            prof_row = QHBoxLayout()
+            prof_row.setSpacing(16)
+
+            # Avatar preview widget
+            self.avatar_preview_lbl = QLabel()
+            self.avatar_preview_lbl.setFixedSize(56, 56)
+            self._update_avatar_preview()
+            prof_row.addWidget(self.avatar_preview_lbl)
+
+            # User details & actions
+            info_layout = QVBoxLayout()
+            info_layout.setSpacing(4)
+
+            self.user_name_lbl = QLabel(f"<b>{self.usuario}</b>")
+            self.user_name_lbl.setFont(QFont("Segoe UI", 11))
+            self.user_name_lbl.setStyleSheet("color: #5a2a3a; border: none; background: transparent;")
+            info_layout.addWidget(self.user_name_lbl)
+
+            btn_sub_layout = QHBoxLayout()
+            btn_sub_layout.setSpacing(10)
+
+            self.btn_change_avatar = QPushButton(f"✨  {t('Cambiar Avatar')}")
+            self.btn_change_avatar.setProperty("class", "pill")
+            self.btn_change_avatar.setFixedHeight(30)
+            self.btn_change_avatar.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_change_avatar.clicked.connect(self._open_avatar_picker)
+            btn_sub_layout.addWidget(self.btn_change_avatar)
+
+            self.btn_change_pwd = QPushButton()
+            self._refresh_pwd_btn_text()
+            self.btn_change_pwd.setProperty("class", "pill")
+            self.btn_change_pwd.setFixedHeight(30)
+            self.btn_change_pwd.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_change_pwd.clicked.connect(self._open_password_config)
+            btn_sub_layout.addWidget(self.btn_change_pwd)
+
+            btn_sub_layout.addStretch()
+            info_layout.addLayout(btn_sub_layout)
+
+            prof_row.addLayout(info_layout)
+            prof_card.layout().addLayout(prof_row)
+            root.addWidget(prof_card)
+        else:
+            self.lbl_sec_perfil = None
 
         # ───── Sección 1: Audio ────────────────────────────────────────────────
         audio_card, audio_layout, self.lbl_sec_audio = _make_section_card(t("Audio"), "🎵")
@@ -399,8 +721,64 @@ class AjustesWidget(QWidget):
         # Conectar a los cambios de idioma para retraducir dinámicamente esta pantalla
         language_manager.language_changed.connect(self.retranslate_ui)
 
+    def _load_user_profile_data(self):
+        if not self.usuario:
+            return
+        db = SessionLocal()
+        try:
+            user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.usuario).first()
+            if user:
+                self.user_avatar_path = user.avatar
+                self.user_has_password = bool(user.password_hash)
+        except Exception:
+            pass
+        finally:
+            db.close()
+
+    def _update_avatar_preview(self):
+        if hasattr(self, 'avatar_preview_lbl') and self.avatar_preview_lbl:
+            pix = _get_circular_avatar(self.user_avatar_path, size=56)
+            self.avatar_preview_lbl.setPixmap(pix)
+
+    def _refresh_pwd_btn_text(self):
+        if hasattr(self, 'btn_change_pwd') and self.btn_change_pwd:
+            if self.user_has_password:
+                self.btn_change_pwd.setText(f"🔑  {t('Cambiar/Quitar Contraseña')}")
+            else:
+                self.btn_change_pwd.setText(f"🔒  {t('Añadir Contraseña')}")
+
+    def _open_avatar_picker(self):
+        dlg = AvatarPickerDialog(current_avatar=self.user_avatar_path, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_avatar = dlg.selected_path
+            db = SessionLocal()
+            try:
+                user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.usuario).first()
+                if user:
+                    user.avatar = new_avatar
+                    db.commit()
+                    self.user_avatar_path = new_avatar
+                    self._update_avatar_preview()
+                    QMessageBox.information(self, t("Avatar Actualizado"), t("Tu nuevo avatar ha sido guardado exitosamente."))
+            except Exception as e:
+                db.rollback()
+                QMessageBox.critical(self, "Error", f"Error al guardar el avatar: {e}")
+            finally:
+                db.close()
+
+    def _open_password_config(self):
+        dlg = PasswordConfigDialog(username=self.usuario, has_password=self.user_has_password, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._load_user_profile_data()
+            self._refresh_pwd_btn_text()
+
     def retranslate_ui(self):
         self.title_lbl.setText(f"⚙️  {t('Ajustes')}")
+        if hasattr(self, 'lbl_sec_perfil') and self.lbl_sec_perfil:
+            self.lbl_sec_perfil.setText(f"  👤  {t('Perfil de Usuario')}")
+        if hasattr(self, 'btn_change_avatar') and self.btn_change_avatar:
+            self.btn_change_avatar.setText(f"✨  {t('Cambiar Avatar')}")
+        self._refresh_pwd_btn_text()
         if self.lbl_sec_audio:
             self.lbl_sec_audio.setText(f"  🎵  {t('Audio')}")
         self.lbl_musica.setText(t("Música de fondo"))

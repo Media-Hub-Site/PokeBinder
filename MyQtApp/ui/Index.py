@@ -179,7 +179,7 @@ class MainWindow(QWidget):
         self.paginas.addWidget(GaleriaCartasInventario(IMAGES_DIR, self.usuario))# índice 2
         self.paginas.addWidget(MazosView(self.usuario))                          # índice 3
         self.paginas.addWidget(PrintView(self.usuario))                          # índice 4
-        self.paginas.addWidget(AjustesWidget())                                  # índice 5
+        self.paginas.addWidget(AjustesWidget(self.usuario))                     # índice 5
 
         # Área principal
         content_widget = QWidget()

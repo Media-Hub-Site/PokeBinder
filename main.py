@@ -15,10 +15,10 @@ class AppWindow(QWidget):
         super().__init__()
         self.setWindowTitle("TCG Inventory Manager")
         
-        # Obtener geometría centrada para la ventana de Login (450x320)
-        self.setGeometry(self.get_centered_geometry(450, 320))
-        self.setMinimumSize(450, 320)
-        self.setMaximumSize(450, 320)
+        # Obtener geometría centrada para la ventana de Login (520x520)
+        self.setGeometry(self.get_centered_geometry(520, 520))
+        self.setMinimumSize(520, 520)
+        self.setMaximumSize(520, 520)
         
         self.setObjectName("MainBackground")
 
@@ -112,8 +112,8 @@ class AppWindow(QWidget):
         self.setMinimumSize(0, 0)
         self.setMaximumSize(16777215, 16777215)
 
-        # Ejecutar transición de regreso al Login (índice 0) con redimensionamiento animado a 450x320
-        self.ejecutar_transicion_flash(nuevo_indice=0, destruir_main=True, target_w=450, target_h=320)
+        # Ejecutar transición de regreso al Login (índice 0) con redimensionamiento animado a 520x520
+        self.ejecutar_transicion_flash(nuevo_indice=0, destruir_main=True, target_w=520, target_h=520)
 
     def ejecutar_transicion_flash(self, nuevo_indice, destruir_main=False, target_w=None, target_h=None):
         self.flash_overlay.show()
@@ -162,8 +162,10 @@ class AppWindow(QWidget):
                     widget_main.deleteLater()
                 self.main_window = None
                 # Fijar tamaño del login
-                self.setMinimumSize(450, 320)
-                self.setMaximumSize(450, 320)
+                self.setMinimumSize(520, 520)
+                self.setMaximumSize(520, 520)
+                if hasattr(self.login_widget, 'load_profiles'):
+                    self.login_widget.load_profiles()
             else:
                 # Establecer límites del main window
                 self.setMinimumSize(950, 600)

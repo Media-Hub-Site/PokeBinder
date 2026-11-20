@@ -1,7 +1,7 @@
 import sys
 import os
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # Rutas absolutas del proyecto
 if getattr(sys, 'frozen', False):
@@ -10,6 +10,8 @@ if getattr(sys, 'frozen', False):
 else:
     BUNDLE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     EXE_DIR = BUNDLE_DIR
+
+PROJECT_ROOT = BUNDLE_DIR
 
 # Carpetas de assets estáticos (empaquetados con el exe)
 ASSETS_DIR = os.path.join(BUNDLE_DIR, "assets")
