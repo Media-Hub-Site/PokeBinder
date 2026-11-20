@@ -229,13 +229,25 @@ class LoginWindow(QWidget):
         self.input_username.returnPressed.connect(self.handle_login)
         card_layout.addWidget(self.input_username)
 
-        # Botón principal
-        self.btn_login = QPushButton(t("Entrar / Crear usuario"))
+        # Botones separados: Iniciar sesión y Registrarse
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_login = QPushButton(t("Iniciar sesión"))
         self.btn_login.setFixedHeight(42)
         self.btn_login.setObjectName("LoginBtn")
         self.btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_login.clicked.connect(self.handle_login)
-        card_layout.addWidget(self.btn_login)
+
+        self.btn_register = QPushButton(t("Registrarse"))
+        self.btn_register.setFixedHeight(42)
+        self.btn_register.setObjectName("LoginBtn")
+        self.btn_register.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_register.clicked.connect(self.handle_register)
+
+        btn_row.addWidget(self.btn_login)
+        btn_row.addWidget(self.btn_register)
+        card_layout.addLayout(btn_row)
 
         main_layout.addWidget(self.card, 0, Qt.AlignmentFlag.AlignCenter)
 
@@ -282,7 +294,8 @@ class LoginWindow(QWidget):
         self.label_header.setText(t("Bienvenido a PokeBinder"))
         self.label_sub.setText(t("Selecciona un perfil existente o entra con otra cuenta:"))
         self.input_username.setPlaceholderText(t("Nombre de usuario"))
-        self.btn_login.setText(t("Entrar / Crear usuario"))
+        self.btn_login.setText(t("Iniciar sesión"))
+        self.btn_register.setText(t("Registrarse"))
         self.load_profiles()
 
     def mostrar_mensaje(self, titulo, mensaje, tipo="info"):
@@ -309,29 +322,46 @@ class LoginWindow(QWidget):
 
         user = self.session.query(Usuarios).filter(Usuarios.nombre.ilike(username)).first()
 
-        if user:
-            # Si el usuario tiene contraseña configurada, pedirla
-            if user.password_hash:
-                import hashlib
-                pwd, ok = self._prompt_password(username)
-                if not ok:
-                    return
-                input_hash = hashlib.sha256(pwd.encode("utf-8")).hexdigest()
-                if input_hash != user.password_hash:
-                    self.mostrar_mensaje(t("Error"), t("Contraseña incorrecta."), tipo="error")
-                    return
-            self.mostrar_mensaje(t("Bienvenido"), f"{t('Bienvenido de nuevo')}, {user.nombre}!", tipo="info")
-            username = user.nombre
-        else:
-            try:
-                nuevo = Usuarios(nombre=username)
-                self.session.add(nuevo)
-                self.session.commit()
-                self.mostrar_mensaje(t("Usuario creado"), f"{t('Usuario creado')}: '{username}'.", tipo="info")
-            except Exception as e:
-                self.session.rollback()
-                self.mostrar_mensaje(t("Error"), f"{t('Error')}: {e}", tipo="error")
+        if not user:
+            self.mostrar_mensaje(t("Error"), t("La cuenta no existe. Por favor, regístrate."), tipo="error")
+            return
+
+        # Si el usuario tiene contraseña configurada, pedirla
+        if user.password_hash:
+            import hashlib
+            pwd, ok = self._prompt_password(user.nombre)
+            if not ok:
                 return
+            input_hash = hashlib.sha256(pwd.encode("utf-8")).hexdigest()
+            if input_hash != user.password_hash:
+                self.mostrar_mensaje(t("Error"), t("Contraseña incorrecta."), tipo="error")
+                return
+
+        self.mostrar_mensaje(t("Bienvenido"), f"{t('Bienvenido de nuevo')}, {user.nombre}!", tipo="info")
+        self.usuario_logueado = user.nombre
+        self.login_successful.emit(user.nombre)
+
+    def handle_register(self):
+        username = self.input_username.text().strip()
+
+        if not username:
+            self.mostrar_mensaje(t("Error"), t("Debes ingresar un nombre de usuario."), tipo="warning")
+            return
+
+        user = self.session.query(Usuarios).filter(Usuarios.nombre.ilike(username)).first()
+        if user:
+            self.mostrar_mensaje(t("Error"), t("La cuenta ya existe. Por favor, inicia sesión."), tipo="warning")
+            return
+
+        try:
+            nuevo = Usuarios(nombre=username)
+            self.session.add(nuevo)
+            self.session.commit()
+            self.mostrar_mensaje(t("Usuario creado"), f"{t('Usuario creado exitosamente')}: '{username}'.", tipo="info")
+        except Exception as e:
+            self.session.rollback()
+            self.mostrar_mensaje(t("Error"), f"{t('Error al registrar usuario')}: {e}", tipo="error")
+            return
 
         self.usuario_logueado = username
         self.login_successful.emit(username)

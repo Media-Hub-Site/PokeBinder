@@ -241,6 +241,8 @@ class MainWindow(QWidget):
         ajustes.card_size_changed.connect(self.actualizar_tamano_cartas)
         if hasattr(ajustes, 'logout_requested'):
             ajustes.logout_requested.connect(self.cambiar_cuenta)
+        if hasattr(ajustes, 'username_changed'):
+            ajustes.username_changed.connect(self.on_username_changed)
 
         self.actualizar_botones_secundarios(0)
 
@@ -331,6 +333,10 @@ class MainWindow(QWidget):
         anim.finished.connect(cleanup)
         self._current_animations = [anim, eff]
         anim.start()
+
+    def on_username_changed(self, new_username):
+        self.usuario = new_username
+        self.setWindowTitle(f"{t('Menú Principal')} - {t('Usuario:')} {new_username.capitalize()}")
 
     def cambiar_cuenta(self):
         if hasattr(self, 'player') and self.player:

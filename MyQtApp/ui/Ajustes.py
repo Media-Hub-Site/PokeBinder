@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QComboBox, QSizePolicy, QFrame, QApplication, QMessageBox,
-    QDialog, QListWidget, QListWidgetItem, QGridLayout, QLineEdit, QFileDialog
+    QDialog, QListWidget, QListWidgetItem, QGridLayout, QLineEdit, QFileDialog, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QPainter, QPainterPath, QColor
@@ -15,18 +15,26 @@ from MyQtApp.models import Usuarios
 
 
 PRESET_AVATARS = [
-    ("Pikachu", "assets/images/en/pikachu_basep-1.webp"),
-    ("Charizard", "assets/images/en/charizard_dp3-3.webp"),
-    ("Gengar", "assets/images/en/gengar_base3-5.webp"),
-    ("Eevee", "assets/images/en/eevee_mcd19-12.webp"),
-    ("Mewtwo", "assets/images/en/mewtwo_basep-3.webp"),
-    ("Lucario", "assets/images/en/lucario_pop6-2.webp"),
-    ("Snorlax", "assets/images/en/snorlax_base2-11.webp"),
-    ("Squirtle", "assets/images/en/squirtle_bw10-14.webp"),
-    ("Bulbasaur", "assets/images/en/bulbasaur_det1-1.webp"),
-    ("Charmander", "assets/images/en/charmander_det1-4.webp"),
-    ("Jigglypuff", "assets/images/en/jigglypuff_basep-7.webp"),
-    ("Mew", "assets/images/en/mew_si1-1.webp"),
+    ("Blastoise", "assets/perfil/blastoise.webp"),
+    ("Bulbasaur", "assets/perfil/bulbasaur.webp"),
+    ("Charizard", "assets/perfil/charizard.webp"),
+    ("Charmander", "assets/perfil/charmander.webp"),
+    ("Charmeleon", "assets/perfil/charmeleon.webp"),
+    ("Eevee", "assets/perfil/eevee.webp"),
+    ("Espeon", "assets/perfil/espeon.webp"),
+    ("Flareon", "assets/perfil/flareon.webp"),
+    ("Ivysaur", "assets/perfil/ivysaur.webp"),
+    ("Jolteon", "assets/perfil/jolteon.webp"),
+    ("Leafeon", "assets/perfil/leafeon.webp"),
+    ("Pichu", "assets/perfil/pichu.webp"),
+    ("Pikachu", "assets/perfil/pikachu.webp"),
+    ("Raichu", "assets/perfil/raichu.webp"),
+    ("Snorlax", "assets/perfil/snorlax.webp"),
+    ("Squirtle", "assets/perfil/squirtle.webp"),
+    ("Sylveon", "assets/perfil/sylveon.webp"),
+    ("Umbreon", "assets/perfil/umbreon.webp"),
+    ("Vaporeon", "assets/perfil/vaporeon.webp"),
+    ("Wartotle", "assets/perfil/wartotle.webp"),
 ]
 
 
@@ -72,22 +80,33 @@ class AvatarPickerDialog(QDialog):
     def __init__(self, current_avatar: str | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(t("Seleccionar Avatar de Perfil"))
-        self.setFixedSize(540, 480)
+        self.setFixedSize(560, 520)
         self.selected_path = current_avatar
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
 
         header = QLabel(t("Elige un Avatar Pokémon o sube una imagen:"))
         header.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         header.setStyleSheet("color: #a3364a;")
         layout.addWidget(header)
 
-        # Grid de presets
+        # ScrollArea para la lista completa de avatares Pokémon
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid rgba(242, 156, 164, 0.4);
+                border-radius: 10px;
+                background-color: transparent;
+            }
+        """)
+
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
-        grid.setSpacing(12)
+        grid.setSpacing(10)
+        grid.setContentsMargins(8, 8, 8, 8)
 
         self.buttons = []
         for idx, (name, path) in enumerate(PRESET_AVATARS):
@@ -95,11 +114,11 @@ class AvatarPickerDialog(QDialog):
             c = idx % 4
 
             btn = QPushButton()
-            btn.setFixedSize(96, 96)
+            btn.setFixedSize(92, 92)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(name)
 
-            pix = _get_circular_avatar(path, size=72)
+            pix = _get_circular_avatar(path, size=70)
             btn.setIcon(pix)
             btn.setIconSize(pix.size())
 
@@ -121,7 +140,8 @@ class AvatarPickerDialog(QDialog):
             grid.addWidget(btn, r, c)
             self.buttons.append((btn, path))
 
-        layout.addWidget(grid_widget)
+        scroll.setWidget(grid_widget)
+        layout.addWidget(scroll)
 
         # Botón para cargar archivo personalizado
         custom_layout = QHBoxLayout()
@@ -133,8 +153,6 @@ class AvatarPickerDialog(QDialog):
         custom_layout.addWidget(self.btn_upload)
         custom_layout.addStretch()
         layout.addLayout(custom_layout)
-
-        layout.addStretch()
 
         # Botones de acción
         btn_layout = QHBoxLayout()
@@ -184,6 +202,109 @@ class AvatarPickerDialog(QDialog):
         if file_path:
             self.selected_path = file_path
             self.accept()
+
+
+class EditUsernameDialog(QDialog):
+    """Diálogo para cambiar el nombre de usuario (solicita contraseña si la cuenta la tiene)."""
+
+    def __init__(self, username: str, has_password: bool, parent=None):
+        super().__init__(parent)
+        self.old_username = username
+        self.has_password = has_password
+        self.new_username = None
+
+        self.setWindowTitle(t("Cambiar Nombre de Usuario"))
+        self.setFixedSize(380, 240 if has_password else 180)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel(f"✏️  {t('Cambiar nombre para')} {username}")
+        title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        title.setStyleSheet("color: #a3364a;")
+        layout.addWidget(title)
+
+        if has_password:
+            layout.addWidget(QLabel(t("Contraseña actual:")))
+            self.txt_pwd = QLineEdit()
+            self.txt_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            self.txt_pwd.setPlaceholderText(t("Ingresa tu contraseña actual"))
+            self.txt_pwd.setFixedHeight(32)
+            layout.addWidget(self.txt_pwd)
+
+        layout.addWidget(QLabel(t("Nuevo nombre de usuario:")))
+        self.txt_new_name = QLineEdit()
+        self.txt_new_name.setText(username)
+        self.txt_new_name.setFixedHeight(32)
+        layout.addWidget(self.txt_new_name)
+
+        layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton(t("Cancelar"))
+        self.btn_cancel.setFixedHeight(34)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_save = QPushButton(f"💾  {t('Guardar')}")
+        self.btn_save.setProperty("class", "pill")
+        self.btn_save.setFixedHeight(34)
+        self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save.clicked.connect(self.on_save)
+
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_save)
+        layout.addLayout(btn_layout)
+
+    def on_save(self):
+        new_name = self.txt_new_name.text().strip()
+        if not new_name:
+            QMessageBox.warning(self, "Error", t("El nombre de usuario no puede estar vacío."))
+            return
+
+        if new_name == self.old_username:
+            self.reject()
+            return
+
+        db = SessionLocal()
+        try:
+            user = db.query(Usuarios).filter(Usuarios.nombre == self.old_username).first()
+            if not user:
+                QMessageBox.critical(self, "Error", t("Usuario no encontrado."))
+                return
+
+            if self.has_password:
+                pwd = self.txt_pwd.text().strip()
+                pwd_hash = hashlib.sha256(pwd.encode('utf-8')).hexdigest()
+                if user.password_hash and pwd_hash != user.password_hash:
+                    QMessageBox.warning(self, "Error", t("La contraseña actual es incorrecta."))
+                    return
+
+            # Verificar si ya existe otro usuario con ese nuevo nombre
+            exist = db.query(Usuarios).filter(Usuarios.nombre.ilike(new_name)).first()
+            if exist and exist.id != user.id:
+                QMessageBox.warning(self, "Error", t("Ya existe una cuenta con ese nombre de usuario."))
+                return
+
+            # Actualizar nombre en cascada para Mazo y usuario_carta
+            from ..models import UsuarioCarta, Mazo
+            db.query(UsuarioCarta).filter(UsuarioCarta.usuario_nombre == self.old_username).update({"usuario_nombre": new_name})
+            db.query(Mazo).filter(Mazo.usuario_nombre == self.old_username).update({"usuario_nombre": new_name})
+
+            user.nombre = new_name
+            db.commit()
+            self.new_username = new_name
+            QMessageBox.information(self, t("Éxito"), t("Nombre de usuario actualizado con éxito."))
+            self.accept()
+        except Exception as e:
+            db.rollback()
+            QMessageBox.critical(self, "Error", f"Error al cambiar nombre: {e}")
+        finally:
+            db.close()
 
 
 class PasswordConfigDialog(QDialog):
@@ -248,7 +369,7 @@ class PasswordConfigDialog(QDialog):
         new_pwd = self.txt_new_pwd.text().strip()
         db = SessionLocal()
         try:
-            user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.username).first()
+            user = db.query(Usuarios).filter(Usuarios.nombre == self.username).first()
             if not user:
                 QMessageBox.critical(self, "Error", t("Usuario no encontrado."))
                 return
@@ -275,6 +396,137 @@ class PasswordConfigDialog(QDialog):
         except Exception as e:
             db.rollback()
             QMessageBox.critical(self, "Error", f"Error al guardar contraseña: {e}")
+        finally:
+            db.close()
+
+
+class DeleteAccountDialog(QDialog):
+    """Diálogo con flujo de dos pasos y verificación de contraseña para eliminar la cuenta."""
+
+    def __init__(self, username: str, has_password: bool, parent=None):
+        super().__init__(parent)
+        self.username = username
+        self.has_password = has_password
+        self.account_deleted = False
+
+        self.setWindowTitle(t("Eliminar Cuenta"))
+        self.setFixedSize(400, 260 if has_password else 200)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title = QLabel(f"🗑️  {t('Eliminar Cuenta:')} <b>{username}</b>")
+        title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        title.setStyleSheet("color: #d93848;")
+        layout.addWidget(title)
+
+        info = QLabel(t("Esta opción eliminará permanentemente tu usuario y tu colección."))
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666666; font-size: 11px;")
+        layout.addWidget(info)
+
+        if has_password:
+            layout.addWidget(QLabel(t("Ingresa tu contraseña para confirmar:")))
+            self.txt_pwd = QLineEdit()
+            self.txt_pwd.setEchoMode(QLineEdit.EchoMode.Password)
+            self.txt_pwd.setPlaceholderText(t("Tu contraseña actual"))
+            self.txt_pwd.setFixedHeight(32)
+            layout.addWidget(self.txt_pwd)
+
+        layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton(t("Cancelar"))
+        self.btn_cancel.setFixedHeight(34)
+        self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_delete = QPushButton(f"🗑️  {t('Eliminar cuenta')}")
+        self.btn_delete.setStyleSheet("""
+            QPushButton {
+                background-color: #d93848;
+                color: white;
+                font-weight: bold;
+                border-radius: 8px;
+                padding: 6px 14px;
+            }
+            QPushButton:hover {
+                background-color: #b82836;
+            }
+        """)
+        self.btn_delete.setFixedHeight(34)
+        self.btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_delete.clicked.connect(self.on_start_deletion)
+
+        btn_layout.addWidget(self.btn_cancel)
+        btn_layout.addWidget(self.btn_delete)
+        layout.addLayout(btn_layout)
+
+    def on_start_deletion(self):
+        db = SessionLocal()
+        try:
+            user = db.query(Usuarios).filter(Usuarios.nombre == self.username).first()
+            if not user:
+                QMessageBox.critical(self, "Error", t("Usuario no encontrado."))
+                return
+
+            # Si tiene contraseña, validar primero
+            if self.has_password:
+                pwd = self.txt_pwd.text().strip()
+                if not pwd:
+                    QMessageBox.warning(self, "Error", t("Debes ingresar tu contraseña."))
+                    return
+                pwd_hash = hashlib.sha256(pwd.encode('utf-8')).hexdigest()
+                if user.password_hash and pwd_hash != user.password_hash:
+                    QMessageBox.warning(self, "Error", t("Contraseña incorrecta."))
+                    return
+
+            # Paso 1: Primer diálogo de confirmación
+            reply1 = QMessageBox.question(
+                self,
+                t("Eliminar Cuenta"),
+                t("¿Estás seguro de eliminar tu cuenta?"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply1 != QMessageBox.StandardButton.Yes:
+                return
+
+            # Paso 2: Segundo diálogo de confirmación
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle(t("Confirmación Final"))
+            msg_box.setText(t("Esta acción es irreversible."))
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            btn_continue = msg_box.addButton(t("Continuar"), QMessageBox.ButtonRole.AcceptRole)
+            btn_cancel = msg_box.addButton(t("Cancelar"), QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(btn_cancel)
+            msg_box.exec()
+
+            if msg_box.clickedButton() != btn_continue:
+                return
+
+            # Proceder con la eliminación del usuario y dependencias
+            from ..models import UsuarioCarta, Mazo, MazoCarta
+            # Eliminar cartas en mazos del usuario
+            mazos = db.query(Mazo).filter(Mazo.usuario_nombre == self.username).all()
+            for m in mazos:
+                db.query(MazoCarta).filter(MazoCarta.mazo_id == m.id).delete()
+            db.query(Mazo).filter(Mazo.usuario_nombre == self.username).delete()
+            db.query(UsuarioCarta).filter(UsuarioCarta.usuario_nombre == self.username).delete()
+            db.delete(user)
+            db.commit()
+
+            self.account_deleted = True
+            QMessageBox.information(self, t("Cuenta Eliminada"), t("Tu cuenta ha sido eliminada exitosamente."))
+            self.accept()
+
+        except Exception as e:
+            db.rollback()
+            QMessageBox.critical(self, "Error", f"Error al eliminar la cuenta: {e}")
         finally:
             db.close()
 
@@ -462,6 +714,7 @@ class AjustesWidget(QWidget):
     theme_toggled = pyqtSignal(bool)
     card_size_changed = pyqtSignal(str)
     logout_requested = pyqtSignal()
+    username_changed = pyqtSignal(str)
 
     def __init__(self, usuario=None, parent=None):
         super().__init__(parent)
@@ -515,6 +768,13 @@ class AjustesWidget(QWidget):
             self.btn_change_avatar.clicked.connect(self._open_avatar_picker)
             btn_sub_layout.addWidget(self.btn_change_avatar)
 
+            self.btn_change_name = QPushButton(f"✏️  {t('Cambiar Nombre')}")
+            self.btn_change_name.setProperty("class", "pill")
+            self.btn_change_name.setFixedHeight(30)
+            self.btn_change_name.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_change_name.clicked.connect(self._open_username_config)
+            btn_sub_layout.addWidget(self.btn_change_name)
+
             self.btn_change_pwd = QPushButton()
             self._refresh_pwd_btn_text()
             self.btn_change_pwd.setProperty("class", "pill")
@@ -522,6 +782,25 @@ class AjustesWidget(QWidget):
             self.btn_change_pwd.setCursor(Qt.CursorShape.PointingHandCursor)
             self.btn_change_pwd.clicked.connect(self._open_password_config)
             btn_sub_layout.addWidget(self.btn_change_pwd)
+
+            self.btn_delete_acc = QPushButton(f"🗑️  {t('Eliminar Cuenta')}")
+            self.btn_delete_acc.setProperty("class", "pill")
+            self.btn_delete_acc.setStyleSheet("""
+                QPushButton {
+                    background-color: #fee2e2;
+                    color: #dc2626;
+                    border: 1.5px solid #fca5a5;
+                    font-weight: 600;
+                }
+                QPushButton:hover {
+                    background-color: #fecaca;
+                    border-color: #ef4444;
+                }
+            """)
+            self.btn_delete_acc.setFixedHeight(30)
+            self.btn_delete_acc.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_delete_acc.clicked.connect(self._open_delete_account)
+            btn_sub_layout.addWidget(self.btn_delete_acc)
 
             btn_sub_layout.addStretch()
             info_layout.addLayout(btn_sub_layout)
@@ -726,7 +1005,7 @@ class AjustesWidget(QWidget):
             return
         db = SessionLocal()
         try:
-            user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.usuario).first()
+            user = db.query(Usuarios).filter(Usuarios.nombre == self.usuario).first()
             if user:
                 self.user_avatar_path = user.avatar
                 self.user_has_password = bool(user.password_hash)
@@ -753,7 +1032,7 @@ class AjustesWidget(QWidget):
             new_avatar = dlg.selected_path
             db = SessionLocal()
             try:
-                user = db.query(Usuarios).filter(Usuarios.nombre_usuario == self.usuario).first()
+                user = db.query(Usuarios).filter(Usuarios.nombre == self.usuario).first()
                 if user:
                     user.avatar = new_avatar
                     db.commit()
@@ -772,12 +1051,30 @@ class AjustesWidget(QWidget):
             self._load_user_profile_data()
             self._refresh_pwd_btn_text()
 
+    def _open_username_config(self):
+        dlg = EditUsernameDialog(username=self.usuario, has_password=self.user_has_password, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.new_username:
+            old_name = self.usuario
+            self.usuario = dlg.new_username
+            self.user_name_lbl.setText(f"<b>{self.usuario}</b>")
+            self._load_user_profile_data()
+            self.username_changed.emit(self.usuario)
+
+    def _open_delete_account(self):
+        dlg = DeleteAccountDialog(username=self.usuario, has_password=self.user_has_password, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.account_deleted:
+            self.logout_requested.emit()
+
     def retranslate_ui(self):
         self.title_lbl.setText(f"⚙️  {t('Ajustes')}")
         if hasattr(self, 'lbl_sec_perfil') and self.lbl_sec_perfil:
             self.lbl_sec_perfil.setText(f"  👤  {t('Perfil de Usuario')}")
         if hasattr(self, 'btn_change_avatar') and self.btn_change_avatar:
             self.btn_change_avatar.setText(f"✨  {t('Cambiar Avatar')}")
+        if hasattr(self, 'btn_change_name') and self.btn_change_name:
+            self.btn_change_name.setText(f"✏️  {t('Cambiar Nombre')}")
+        if hasattr(self, 'btn_delete_acc') and self.btn_delete_acc:
+            self.btn_delete_acc.setText(f"🗑️  {t('Eliminar Cuenta')}")
         self._refresh_pwd_btn_text()
         if self.lbl_sec_audio:
             self.lbl_sec_audio.setText(f"  🎵  {t('Audio')}")
