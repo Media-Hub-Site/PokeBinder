@@ -6,9 +6,7 @@ from MyQtApp.ui.Login import LoginWindow
 from MyQtApp.ui.Index import MainWindow
 from MyQtApp.models import Base
 from MyQtApp.session import engine
-from MyQtApp.config import apply_global_style, APP_VERSION
-from MyQtApp.app.updater import UpdateCheckerThread
-from MyQtApp.ui.UpdateDialog import UpdateDialog
+from MyQtApp.config import apply_global_style
 
 class AppWindow(QWidget):
     def __init__(self):
@@ -48,16 +46,6 @@ class AppWindow(QWidget):
 
         # Ajustar geometría del flash inicialmente
         self.flash_overlay.setGeometry(self.rect())
-
-        # Iniciar chequeo de actualización en segundo plano
-        self.checker_thread = UpdateCheckerThread(self)
-        self.checker_thread.update_available.connect(self.on_update_available)
-        self.checker_thread.start()
-
-    def on_update_available(self, new_version, release_notes, download_url):
-        # Crear y mostrar el diálogo de actualización
-        dialog = UpdateDialog(new_version, release_notes, download_url, self)
-        dialog.exec()
 
     @pyqtProperty(float)
     def windowProgress(self):
