@@ -696,13 +696,13 @@ class BinderView(QWidget):
         super().__init__(parent)
         self.usuario = usuario
         self.binder_data = {}
-        self.current_folder_id = "default"
+        self.current_folder_id = None
         self.current_spread_index = 0 # 0 means pages 0 and 1
-        self.current_mode = "3x3" # default mode
+        self.current_mode = "3x3" # mode determined by folder
         
         self.load_binder_data()
         
-        # Main Layout: Splitter logic or simple HBox
+        # Main Layout
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -721,22 +721,91 @@ class BinderView(QWidget):
         
         main_layout.addWidget(left_container)
         
-        # --- Right Panel: Binder Pages ---
-        right_container = QWidget()
-        right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(20, 20, 20, 10)
+        # --- Right Panel: Stacked Widget (Vista Carpetas vs Vista Binder Páginas) ---
+        self.main_stack = QStackedWidget()
+        main_layout.addWidget(self.main_stack, 1)
+
+        # 1. Pantalla: Vista de Carpetas (Gallery / Home de Carpetas)
+        self.folders_view_widget = QWidget()
+        self.setup_folders_view()
+        self.main_stack.addWidget(self.folders_view_widget)
+
+        # 2. Pantalla: Vista de Páginas del Binder
+        self.binder_pages_widget = QWidget()
+        self.setup_binder_pages_view()
+        self.main_stack.addWidget(self.binder_pages_widget)
+
+        # Mostrar carpetas inicialmente
+        self.mostrar_vista_carpetas()
+        language_manager.language_changed.connect(self.retranslate_ui)
+
+    def setup_folders_view(self):
+        """Configura la vista inicial de carpetas del usuario con tarjetas interactivas."""
+        layout = QVBoxLayout(self.folders_view_widget)
+        layout.setContentsMargins(30, 25, 30, 25)
+        layout.setSpacing(20)
+
+        # Header de Vista Carpetas
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(15)
+
+        self.lbl_folders_title = QLabel(f"📁 {t('Mis Carpetas / Binders')}")
+        self.lbl_folders_title.setStyleSheet("font-size: 22px; font-weight: bold; color: #5a2a3a;")
+        top_bar.addWidget(self.lbl_folders_title)
+
+        top_bar.addStretch()
+
+        self.btn_crear_carpeta_main = QPushButton(f"✨ + {t('Nueva Carpeta')}")
+        self.btn_crear_carpeta_main.setFixedHeight(36)
+        self.btn_crear_carpeta_main.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_crear_carpeta_main.setProperty("class", "pill")
+        self.btn_crear_carpeta_main.clicked.connect(self.abrir_dialogo_crear_carpeta)
+        top_bar.addWidget(self.btn_crear_carpeta_main)
+
+        layout.addLayout(top_bar)
+
+        # Subtítulo explicativo
+        self.lbl_folders_subtitle = QLabel(t("Selecciona una carpeta para abrir tu álbum o crea una nueva personalizada."))
+        self.lbl_folders_subtitle.setStyleSheet("font-size: 13px; color: #884d5d;")
+        layout.addWidget(self.lbl_folders_subtitle)
+
+        # Scroll Area para el catálogo de carpetas
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background-color: transparent; border: none;")
+
+        self.folders_container = QWidget()
+        self.folders_grid = QGridLayout(self.folders_container)
+        self.folders_grid.setSpacing(20)
+        self.folders_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        scroll.setWidget(self.folders_container)
+
+        layout.addWidget(scroll, 1)
+
+    def setup_binder_pages_view(self):
+        """Configura la vista interna del binder seleccionado."""
+        right_layout = QVBoxLayout(self.binder_pages_widget)
+        right_layout.setContentsMargins(20, 15, 20, 10)
         
-        # Header layout for Title, Folder Selector and Mode Selector
+        # Header layout for Title, Folder Selector and Back Button
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(10)
+        header_layout.setSpacing(12)
+
+        # Botón Volver a mis carpetas
+        self.btn_back_to_folders = QPushButton(f"◀ {t('Volver a Carpetas')}")
+        self.btn_back_to_folders.setFixedHeight(32)
+        self.btn_back_to_folders.setProperty("class", "pill")
+        self.btn_back_to_folders.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back_to_folders.clicked.connect(self.mostrar_vista_carpetas)
+        header_layout.addWidget(self.btn_back_to_folders)
 
         self.title_lbl = QLabel(t("Binder"))
         self.title_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
         header_layout.addWidget(self.title_lbl)
 
-        # Selector de Carpetas / Binders
+        # Selector rápido de Carpetas / Binders
         self.lbl_folder_icon = QLabel("📁")
-        self.lbl_folder_icon.setStyleSheet("font-size: 16px; margin-left: 10px;")
+        self.lbl_folder_icon.setStyleSheet("font-size: 16px; margin-left: 6px;")
         header_layout.addWidget(self.lbl_folder_icon)
 
         self.combo_folders = QComboBox()
@@ -773,23 +842,19 @@ class BinderView(QWidget):
 
         header_layout.addStretch()
 
-        # Mode Selector Buttons
-        self.mode_buttons = {}
-        mode_container = QWidget()
-        mode_btn_layout = QHBoxLayout(mode_container)
-        mode_btn_layout.setContentsMargins(2, 2, 2, 2)
-        mode_btn_layout.setSpacing(6)
+        # Etiqueta informativa del modo fijo de la carpeta
+        self.lbl_folder_info_badge = QLabel("")
+        self.lbl_folder_info_badge.setStyleSheet("""
+            background-color: #ffdce5;
+            color: #703043;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 4px 12px;
+            border-radius: 10px;
+            border: 1px solid #f2a7b7;
+        """)
+        header_layout.addWidget(self.lbl_folder_info_badge)
 
-        for mode in ["2x2", "3x3", "3x4", "4x4"]:
-            btn = QPushButton(mode)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setProperty("class", "pill selected" if mode == self.current_mode else "pill")
-            btn.setFixedSize(58, 30)
-            btn.clicked.connect(lambda checked, m=mode: self.change_mode(m))
-            mode_btn_layout.addWidget(btn)
-            self.mode_buttons[mode] = btn
-
-        header_layout.addWidget(mode_container)
         right_layout.addLayout(header_layout)
 
         # Spread Stack Container (Stacked Widget to allow transition animations)
@@ -845,13 +910,201 @@ class BinderView(QWidget):
         controls_layout.addStretch()
         
         right_layout.addLayout(controls_layout)
-        
-        main_layout.addWidget(right_container)
-        
-        # Initialize pages
+
+    def mostrar_vista_carpetas(self):
+        """Muestra la vista de catálogo/selección de carpetas del usuario."""
+        self.render_folders_grid()
+        self.main_stack.setCurrentWidget(self.folders_view_widget)
+
+    def abrir_carpeta(self, folder_id):
+        """Abre la carpeta seleccionada y pasa a la vista de páginas."""
+        folders = self.get_user_folders()
+        if folder_id not in folders:
+            return
+        self.current_folder_id = folder_id
+        folder = folders[folder_id]
+        self.current_mode = folder.get("mode", "3x3")
+        self.current_spread_index = 0
         self.update_folder_combo()
+        self.aplicar_estilo_carpeta_actual()
         self.update_spread(direction=0)
-        language_manager.language_changed.connect(self.retranslate_ui)
+        self.main_stack.setCurrentWidget(self.binder_pages_widget)
+
+    def render_folders_grid(self):
+        """Dibuja las tarjetas de carpetas con sus diseños, colores, tamaños y cantidad de cartas."""
+        # Limpiar elementos anteriores
+        for i in reversed(range(self.folders_grid.count())):
+            item = self.folders_grid.itemAt(i)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        folders = self.get_user_folders()
+        if not folders:
+            # Mensaje de que no tiene carpetas creadas
+            empty_box = QFrame()
+            empty_box.setStyleSheet("""
+                QFrame {
+                    background-color: #ffffff;
+                    border: 2px dashed #f29ca4;
+                    border-radius: 16px;
+                    padding: 40px;
+                }
+            """)
+            empty_layout = QVBoxLayout(empty_box)
+            empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.setSpacing(16)
+
+            lbl_empty_icon = QLabel("📂")
+            lbl_empty_icon.setStyleSheet("font-size: 50px;")
+            lbl_empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(lbl_empty_icon)
+
+            lbl_msg = QLabel(t("Aún no tienes ninguna carpeta creada."))
+            lbl_msg.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
+            lbl_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(lbl_msg)
+
+            lbl_submsg = QLabel(t("Crea tu primer binder personalizado para organizar tus cartas favoritas."))
+            lbl_submsg.setStyleSheet("font-size: 13px; color: #703043;")
+            lbl_submsg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_layout.addWidget(lbl_submsg)
+
+            btn_first_folder = QPushButton(f"✨ {t('Crear mi primera carpeta')}")
+            btn_first_folder.setProperty("class", "pill")
+            btn_first_folder.setFixedHeight(40)
+            btn_first_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_first_folder.setStyleSheet("font-size: 14px; font-weight: bold; padding: 0 24px;")
+            btn_first_folder.clicked.connect(self.abrir_dialogo_crear_carpeta)
+            empty_layout.addWidget(btn_first_folder, 0, Qt.AlignmentFlag.AlignCenter)
+
+            self.folders_grid.addWidget(empty_box, 0, 0, 1, 3)
+            return
+
+        cols = 3
+        row = 0
+        col = 0
+        for f_id, f_data in folders.items():
+            card_widget = self._crear_tarjeta_carpeta(f_id, f_data)
+            self.folders_grid.addWidget(card_widget, row, col)
+            col += 1
+            if col >= cols:
+                col = 0
+                row += 1
+
+    def _crear_tarjeta_carpeta(self, f_id, f_data):
+        """Crea el widget visual de una carpeta con portada estilizada, badges y acciones."""
+        name = f_data.get("name", "Carpeta")
+        color = f_data.get("color", "#ffeef2")
+        design = f_data.get("design", "Clásico")
+        mode = f_data.get("mode", "3x3")
+        
+        cards_dict = f_data.get("cards", {}).get(mode, {})
+        cant_cartas = len(cards_dict)
+
+        frame = QFrame()
+        frame.setFixedSize(220, 240)
+        frame.setCursor(Qt.CursorShape.PointingHandCursor)
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {color};
+                border: 2px solid #e5a4b1;
+                border-radius: 14px;
+            }}
+            QFrame:hover {{
+                border: 2.5px solid #d45d79;
+            }}
+        """)
+
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        # Barra superior de la tarjeta (Diseño y botón eliminar rápido)
+        top_h = QHBoxLayout()
+        lbl_design = QLabel(f"🎨 {design}")
+        lbl_design.setStyleSheet("font-size: 11px; font-weight: 600; color: #5a2a3a; background: rgba(255,255,255,0.6); padding: 2px 6px; border-radius: 6px;")
+        top_h.addWidget(lbl_design)
+        top_h.addStretch()
+
+        btn_del = QPushButton("🗑️")
+        btn_del.setFixedSize(24, 24)
+        btn_del.setToolTip(t("Eliminar esta carpeta"))
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,0.7);
+                border: none;
+                border-radius: 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: #fee2e2;
+            }
+        """)
+        btn_del.clicked.connect(lambda ch, target_id=f_id, target_name=name: self._eliminar_carpeta_directa(target_id, target_name))
+        top_h.addWidget(btn_del)
+        layout.addLayout(top_h)
+
+        # Ícono central del binder
+        icon_lbl = QLabel("📖")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("font-size: 48px; background: transparent; border: none; margin-top: 6px;")
+        layout.addWidget(icon_lbl)
+
+        # Nombre de la carpeta
+        lbl_name = QLabel(name)
+        lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_name.setStyleSheet("font-size: 15px; font-weight: bold; color: #3a1a25; background: transparent; border: none;")
+        layout.addWidget(lbl_name)
+
+        # Metadatos (Modo y total de cartas)
+        meta_layout = QHBoxLayout()
+        meta_layout.setSpacing(6)
+        meta_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        badge_mode = QLabel(f"📐 {mode}")
+        badge_mode.setStyleSheet("background: white; border: 1px solid #d45d79; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #703043;")
+        meta_layout.addWidget(badge_mode)
+
+        badge_cards = QLabel(f"🃏 {cant_cartas} cartas")
+        badge_cards.setStyleSheet("background: white; border: 1px solid #e5a4b1; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #5a2a3a;")
+        meta_layout.addWidget(badge_cards)
+
+        layout.addLayout(meta_layout)
+
+        # Botón Abrir Carpeta
+        btn_open = QPushButton(f"📂 {t('Abrir Carpeta')}")
+        btn_open.setProperty("class", "pill")
+        btn_open.setFixedHeight(28)
+        btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_open.clicked.connect(lambda ch, target_id=f_id: self.abrir_carpeta(target_id))
+        layout.addWidget(btn_open)
+
+        # Al hacer click en cualquier parte del frame, abrir la carpeta
+        def on_frame_click(event):
+            self.abrir_carpeta(f_id)
+        frame.mousePressEvent = on_frame_click
+
+        return frame
+
+    def _eliminar_carpeta_directa(self, folder_id, folder_name):
+        folders = self.get_user_folders()
+        if len(folders) <= 0:
+            return
+        resp = QMessageBox.question(
+            self,
+            t("Confirmar Eliminación"),
+            f"{t('¿Seguro que deseas eliminar la carpeta')} '{folder_name}'? {t('Las cartas que contenía seguirán existiendo en tu colección general.')}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if resp == QMessageBox.StandardButton.Yes:
+            if folder_id in folders:
+                del folders[folder_id]
+                self.save_binder_data()
+                if self.current_folder_id == folder_id:
+                    self.current_folder_id = next(iter(folders.keys())) if folders else None
+                show_toast(t("Carpeta eliminada"), "info")
+                self.render_folders_grid()
 
     def update_folder_combo(self):
         """Llena el combo de carpetas del usuario."""
@@ -863,13 +1116,18 @@ class BinderView(QWidget):
             self.combo_folders.addItem(f"📁 {f_name}", f_id)
 
         # Seleccionar la carpeta actual
-        idx = self.combo_folders.findData(self.current_folder_id)
-        if idx >= 0:
-            self.combo_folders.setCurrentIndex(idx)
-        else:
-            if self.combo_folders.count() > 0:
-                self.combo_folders.setCurrentIndex(0)
-                self.current_folder_id = self.combo_folders.currentData()
+        if self.current_folder_id:
+            idx = self.combo_folders.findData(self.current_folder_id)
+            if idx >= 0:
+                self.combo_folders.setCurrentIndex(idx)
+            else:
+                if self.combo_folders.count() > 0:
+                    self.combo_folders.setCurrentIndex(0)
+                    self.current_folder_id = self.combo_folders.currentData()
+        elif self.combo_folders.count() > 0:
+            self.combo_folders.setCurrentIndex(0)
+            self.current_folder_id = self.combo_folders.currentData()
+
         self.combo_folders.blockSignals(False)
         self.aplicar_estilo_carpeta_actual()
 
@@ -877,21 +1135,6 @@ class BinderView(QWidget):
         """Devuelve el diccionario de carpetas del usuario actual."""
         user_data = self.binder_data.setdefault(self.usuario, {})
         folders = user_data.setdefault("folders", {})
-        if not folders:
-            # Crear carpeta por defecto si no tiene ninguna
-            folders["default"] = {
-                "name": "Mi Carpeta",
-                "color": "#ffeef2",
-                "design": "Clásico",
-                "mode": "3x3",
-                "cards": {
-                    "2x2": {},
-                    "3x3": {},
-                    "3x4": {},
-                    "4x4": {}
-                }
-            }
-            self.save_binder_data()
         return folders
 
     def aplicar_estilo_carpeta_actual(self):
@@ -899,23 +1142,17 @@ class BinderView(QWidget):
         folders = self.get_user_folders()
         folder = folders.get(self.current_folder_id, {})
         color = folder.get("color", "#ffeef2")
-        # Actualizar modo si la carpeta tiene uno guardado
+        # Actualizar modo desde la carpeta
         folder_mode = folder.get("mode")
-        if folder_mode and folder_mode in BINDER_MODES and folder_mode != self.current_mode:
+        if folder_mode and folder_mode in BINDER_MODES:
             self.current_mode = folder_mode
-            for m, btn in self.mode_buttons.items():
-                btn.setProperty("class", "pill selected" if m == folder_mode else "pill")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+        self.lbl_folder_info_badge.setText(f"📐 {self.current_mode} | 🎨 {folder.get('design', 'Clásico')}")
 
     def on_folder_selected(self, index):
         folder_id = self.combo_folders.currentData()
         if not folder_id or folder_id == self.current_folder_id:
             return
-        self.current_folder_id = folder_id
-        self.current_spread_index = 0
-        self.aplicar_estilo_carpeta_actual()
-        self.update_spread(direction=0)
+        self.abrir_carpeta(folder_id)
 
     def abrir_dialogo_crear_carpeta(self):
         dlg = QDialog(self)
@@ -1009,10 +1246,11 @@ class BinderView(QWidget):
             self.current_folder_id = new_id
             self.current_mode = combo_tamano.currentText()
             self.current_spread_index = 0
-            self.update_folder_combo()
-            self.update_spread(direction=0)
+            self.render_folders_grid()
             show_toast(f"Carpeta '{nombre}' creada con éxito", "info")
             dlg.accept()
+            # Abrir directamente la nueva carpeta creada
+            self.abrir_carpeta(new_id)
 
         btn_crear.clicked.connect(on_crear)
         btn_row.addWidget(btn_cancel)
@@ -1072,8 +1310,7 @@ class BinderView(QWidget):
         btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def on_eliminar():
-            if combo.count() <= 1:
-                QMessageBox.warning(dlg, t("Error"), t("Debes tener al menos una carpeta."))
+            if combo.count() <= 0:
                 return
             target_id = combo.currentData()
             target_name = combo.currentText()
@@ -1084,14 +1321,19 @@ class BinderView(QWidget):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if resp == QMessageBox.StandardButton.Yes:
-                del folders[target_id]
+                if target_id in folders:
+                    del folders[target_id]
                 self.save_binder_data()
                 if self.current_folder_id == target_id:
-                    self.current_folder_id = next(iter(folders.keys()))
-                self.update_folder_combo()
-                self.update_spread(direction=0)
+                    self.current_folder_id = next(iter(folders.keys())) if folders else None
                 show_toast(t("Carpeta eliminada"), "info")
+                self.render_folders_grid()
                 dlg.accept()
+                if not folders or not self.current_folder_id:
+                    self.mostrar_vista_carpetas()
+                else:
+                    self.update_folder_combo()
+                    self.update_spread(direction=0)
 
         btn_del.clicked.connect(on_eliminar)
         layout.addWidget(btn_del)
@@ -1148,6 +1390,12 @@ class BinderView(QWidget):
         self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
         if hasattr(self.inventory, 'retranslate_ui'):
             self.inventory.retranslate_ui()
+        if hasattr(self, 'btn_back_to_folders'):
+            self.btn_back_to_folders.setText(f"◀ {t('Volver a Carpetas')}")
+        if hasattr(self, 'lbl_folders_title'):
+            self.lbl_folders_title.setText(f"📁 {t('Mis Carpetas / Binders')}")
+        if hasattr(self, 'btn_crear_carpeta_main'):
+            self.btn_crear_carpeta_main.setText(f"✨ + {t('Nueva Carpeta')}")
         
     def load_binder_data(self):
         if os.path.exists(BINDER_DATA_FILE):
@@ -1163,24 +1411,27 @@ class BinderView(QWidget):
             
         user_data = self.binder_data[self.usuario]
         
-        # Si no tiene estructura de folders, migrar datos existentes
+        # Si no tiene estructura de folders, migrar solo si existían cartas previas
         if "folders" not in user_data:
-            # Comprobar si tenía modos directamente
             existing_cards = {
                 "2x2": user_data.get("2x2", {}),
                 "3x3": user_data.get("3x3", {}),
                 "3x4": user_data.get("3x4", user_data.get("4x3", {})),
                 "4x4": user_data.get("4x4", {})
             }
-            user_data["folders"] = {
-                "default": {
-                    "name": "Mi Carpeta",
-                    "color": "#ffeef2",
-                    "design": "Clásico Rosa",
-                    "mode": "3x3",
-                    "cards": existing_cards
+            has_existing = any(len(v) > 0 for v in existing_cards.values())
+            if has_existing:
+                user_data["folders"] = {
+                    "default": {
+                        "name": "Mi Carpeta",
+                        "color": "#ffeef2",
+                        "design": "Clásico Rosa",
+                        "mode": "3x3",
+                        "cards": existing_cards
+                    }
                 }
-            }
+            else:
+                user_data["folders"] = {}
             self.save_binder_data()
 
     def save_binder_data(self):
