@@ -26,6 +26,7 @@ from MyQtApp.ui.BinderBookAnimations import (
     BinderSpreadFrame,
     PageFlipAnimationOverlay,
     BinderOpenAnimationOverlay,
+    render_transparent_cover_pixmap,
 )
 from MyQtApp.ui.toast import show_toast
 
@@ -768,6 +769,7 @@ class BinderView(QWidget):
         self._active_flip_overlay = None
         self._active_open_overlay = None
         self._drag_turn_state = None
+        self._folder_cover_widgets = {}
         
         self.load_binder_data()
         
@@ -881,7 +883,7 @@ class BinderView(QWidget):
         self.btn_back_to_folders.setFixedHeight(32)
         self.btn_back_to_folders.setProperty("class", "pill")
         self.btn_back_to_folders.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_back_to_folders.clicked.connect(self.mostrar_vista_carpetas)
+        self.btn_back_to_folders.clicked.connect(lambda: self.mostrar_vista_carpetas(animate_close=True))
         header_layout.addWidget(self.btn_back_to_folders)
 
         self.title_lbl = QLabel(t("Binder"))
@@ -1024,8 +1026,92 @@ class BinderView(QWidget):
         
         right_layout.addLayout(controls_layout)
 
-    def mostrar_vista_carpetas(self):
-        """Muestra la vista de catálogo/selección de carpetas del usuario."""
+    def mostrar_vista_carpetas(self, animate_close=False):
+        """Muestra la vista de catálogo/selección de carpetas, con animación 3D de cierre al volver."""
+        from MyQtApp.config import load_settings
+        animaciones_activas = load_settings().get("animaciones", True)
+
+        if (
+            animate_close
+            and animaciones_activas
+            and self.main_stack.currentWidget() is self.binder_pages_widget
+            and self.current_folder_id
+        ):
+            closing_folder_id = self.current_folder_id
+            current_spread = self.spread_stack.currentWidget()
+            if current_spread and isinstance(current_spread, BinderSpreadFrame):
+                try:
+                    board_local = current_spread.get_board_rect()
+                    if board_local.width() >= 80 and board_local.height() >= 80:
+                        spread_pix = current_spread.grab(board_local.toRect())
+                        top_left_stack = current_spread.mapTo(self.main_stack, board_local.topLeft().toPoint())
+                        board_in_stack = QRectF(
+                            float(top_left_stack.x()),
+                            float(top_left_stack.y()),
+                            board_local.width(),
+                            board_local.height(),
+                        )
+
+                        # Capturar el fondo limpio de la vista de páginas SIN el binder abierto detrás
+                        current_spread.setVisible(False)
+                        pages_bg_pix = self.binder_pages_widget.grab()
+                        current_spread.setVisible(True)
+
+                        name, design, color, mode = self._get_current_folder_theme()
+                        cover_w = max(140, int(board_local.width() * 0.5))
+                        cover_h = max(180, int(board_local.height()))
+                        cover_pix = render_transparent_cover_pixmap(name, design, color, mode, cover_w, cover_h)
+
+                        # Cambiar a la estantería y calcular el destino exacto de la carpeta
+                        self.render_folders_grid()
+                        self.main_stack.setCurrentWidget(self.folders_view_widget)
+                        if self.folders_view_widget.layout():
+                            self.folders_view_widget.layout().activate()
+                        if self.folders_container.layout():
+                            self.folders_container.layout().activate()
+                        QApplication.processEvents()
+
+                        target_rect_in_stack = None
+                        target_cover = self._folder_cover_widgets.get(closing_folder_id)
+                        if target_cover is not None:
+                            try:
+                                tl = target_cover.mapTo(self.main_stack, QPoint(0, 0))
+                                target_rect_in_stack = QRectF(
+                                    float(tl.x()),
+                                    float(tl.y()),
+                                    float(target_cover.width()),
+                                    float(target_cover.height()),
+                                )
+                            except Exception:
+                                target_rect_in_stack = None
+
+                        shelf_pix = self.folders_view_widget.grab()
+
+                        if self._active_open_overlay:
+                            try:
+                                self._active_open_overlay.deleteLater()
+                            except Exception:
+                                pass
+                            self._active_open_overlay = None
+
+                        overlay = BinderOpenAnimationOverlay(
+                            parent=self.main_stack,
+                            cover_pixmap=cover_pix,
+                            spread_pixmap=spread_pix,
+                            board_rect=board_in_stack,
+                            origin_rect=target_rect_in_stack,
+                            design=design,
+                            color=color,
+                            reverse=True,
+                            shelf_pixmap=shelf_pix,
+                            pages_bg_pixmap=pages_bg_pix,
+                        )
+                        self._active_open_overlay = overlay
+                        overlay.animation_finished.connect(lambda: setattr(self, "_active_open_overlay", None))
+                        return
+                except Exception as e:
+                    print(f"Error en animación de cierre de binder: {e}")
+
         self.render_folders_grid()
         self.main_stack.setCurrentWidget(self.folders_view_widget)
 
@@ -1045,19 +1131,25 @@ class BinderView(QWidget):
         if folder_id not in folders:
             return
 
-        # Capturar posición inicial de la portada en la estantería antes de cambiar de vista
+        from MyQtApp.config import load_settings
+        animaciones_activas = load_settings().get("animaciones", True)
+
+        # Capturar posición inicial de la portada y foto de la estantería ANTES de cambiar de vista
         origin_rect_in_stack = None
-        if origin_widget is not None:
-            try:
-                top_left = origin_widget.mapTo(self.main_stack, QPoint(0, 0))
-                origin_rect_in_stack = QRectF(
-                    float(top_left.x()),
-                    float(top_left.y()),
-                    float(origin_widget.width()),
-                    float(origin_widget.height()),
-                )
-            except Exception:
-                origin_rect_in_stack = None
+        shelf_pix = None
+        if animaciones_activas and self.main_stack.currentWidget() is self.folders_view_widget:
+            shelf_pix = self.folders_view_widget.grab()
+            if origin_widget is not None:
+                try:
+                    top_left = origin_widget.mapTo(self.main_stack, QPoint(0, 0))
+                    origin_rect_in_stack = QRectF(
+                        float(top_left.x()),
+                        float(top_left.y()),
+                        float(origin_widget.width()),
+                        float(origin_widget.height()),
+                    )
+                except Exception:
+                    origin_rect_in_stack = None
 
         self.current_folder_id = folder_id
         folder = folders[folder_id]
@@ -1069,21 +1161,24 @@ class BinderView(QWidget):
         self.actualizar_resumen_precios_binder()
         self.main_stack.setCurrentWidget(self.binder_pages_widget)
 
-        from MyQtApp.config import load_settings
-        animaciones_activas = load_settings().get("animaciones", True)
         if animaciones_activas:
-            QTimer.singleShot(0, lambda r=origin_rect_in_stack: self._run_book_open_animation(r))
-
-    def _run_book_open_animation(self, origin_rect_in_stack=None):
-        """Lanza el overlay 3D de apertura del binder sobre la vista recién cargada."""
-        try:
             current_spread = self.spread_stack.currentWidget()
+            if current_spread:
+                self._run_book_open_animation(origin_rect_in_stack, shelf_pix)
+
+    def _run_book_open_animation(self, origin_rect_in_stack=None, shelf_pix=None):
+        """Lanza el overlay 3D de apertura del binder sin que se vea el binder abierto por detrás."""
+        current_spread = self.spread_stack.currentWidget()
+        try:
             if not current_spread or not isinstance(current_spread, BinderSpreadFrame):
                 return
 
             # Asegurar geometría final calculada antes de capturar los pixmaps
-            self.binder_pages_widget.layout().activate()
-            current_spread.layout().activate()
+            if self.binder_pages_widget.layout():
+                self.binder_pages_widget.layout().activate()
+            if current_spread.layout():
+                current_spread.layout().activate()
+            QApplication.processEvents()
 
             board_local = current_spread.get_board_rect()
             if board_local.width() < 80 or board_local.height() < 80:
@@ -1094,14 +1189,15 @@ class BinderView(QWidget):
             if spread_pix.isNull():
                 return
 
-            # Renderizar portada física a alta resolución con el tamaño exacto de una hoja
+            # Ocultar el pliego real durante la animación y capturar el escritorio limpio sin binder detrás
+            current_spread.setVisible(False)
+            pages_bg_pix = self.binder_pages_widget.grab()
+
+            # Renderizar portada física transparente (sin esquinas blancas)
             name, design, color, mode = self._get_current_folder_theme()
             cover_w = max(140, int(board_local.width() * 0.5))
             cover_h = max(180, int(board_local.height()))
-            temp_cover = BinderCoverWidget(name=name, design=design, color=color, mode=mode)
-            temp_cover.resize(cover_w, cover_h)
-            cover_pix = temp_cover.grab()
-            temp_cover.deleteLater()
+            cover_pix = render_transparent_cover_pixmap(name, design, color, mode, cover_w, cover_h)
 
             # Mapear el rectángulo del binder a coordenadas de self.main_stack
             top_left_stack = current_spread.mapTo(self.main_stack, board_local.topLeft().toPoint())
@@ -1127,11 +1223,28 @@ class BinderView(QWidget):
                 origin_rect=origin_rect_in_stack,
                 design=design,
                 color=color,
+                reverse=False,
+                shelf_pixmap=shelf_pix,
+                pages_bg_pixmap=pages_bg_pix,
             )
             self._active_open_overlay = overlay
-            overlay.animation_finished.connect(lambda: setattr(self, "_active_open_overlay", None))
+
+            def _on_open_done():
+                self._active_open_overlay = None
+                try:
+                    if current_spread:
+                        current_spread.setVisible(True)
+                except RuntimeError:
+                    pass
+
+            overlay.animation_finished.connect(_on_open_done)
         except Exception as e:
             print(f"Error en animación de apertura de binder: {e}")
+            try:
+                if current_spread:
+                    current_spread.setVisible(True)
+            except Exception:
+                pass
 
     def _extract_folder_card_entries(self, folder_data: dict) -> list[tuple[str, str]]:
         """Retorna lista de (id_api, idioma) de todas las cartas colocadas en el modo activo de la carpeta."""
@@ -1308,6 +1421,7 @@ class BinderView(QWidget):
 
     def render_folders_grid(self):
         """Dibuja los binders con diseños físicos realistas o un único botón grande si no hay carpetas."""
+        self._folder_cover_widgets.clear()
         for i in reversed(range(self.folders_grid.count())):
             item = self.folders_grid.itemAt(i)
             if item and item.widget():
@@ -1393,6 +1507,7 @@ class BinderView(QWidget):
         # Portada física realista del Binder (Issue #13)
         cover = BinderCoverWidget(name=name, design=design, color=color, mode=mode, parent=frame)
         cover.setFixedSize(196, 212)
+        self._folder_cover_widgets[f_id] = cover
         layout.addWidget(cover, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Resumen de precio acumulativo por API

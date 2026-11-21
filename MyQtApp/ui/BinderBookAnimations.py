@@ -7,7 +7,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QLinearGradient, QRadialGradient,
-    QPen, QBrush, QPixmap, QPolygonF, QTransform
+    QPen, QBrush, QPixmap, QPolygonF, QTransform, QRegion
 )
 
 try:
@@ -659,12 +659,33 @@ class PageFlipAnimationOverlay(QWidget):
         draw_binder_rings(painter, spine_x, inner_board.top() + 14, inner_board.bottom() - 14, ring_count=3)
 
 
+def render_transparent_cover_pixmap(name: str, design: str, color: str, mode: str, width: int, height: int) -> QPixmap:
+    """Renderiza la portada física BinderCoverWidget sobre un QPixmap transparente (sin bordes blancos)."""
+    from MyQtApp.ui.BinderCoverWidget import BinderCoverWidget
+
+    w = max(120, int(width))
+    h = max(160, int(height))
+    pix = QPixmap(w, h)
+    pix.fill(Qt.GlobalColor.transparent)
+
+    temp = BinderCoverWidget(name=name, design=design, color=color, mode=mode)
+    temp.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+    temp.resize(w, h)
+    # RenderFlag(0) omite el fondo opaco de ventana y dibuja únicamente paintEvent sobre el fondo transparente
+    temp.render(pix, QPoint(0, 0), QRegion(), QWidget.RenderFlag(0))
+    temp.deleteLater()
+    return pix
+
+
 class BinderOpenAnimationOverlay(QWidget):
     """
-    Animación 3D cinematográfica de apertura de Binder (como abrir un libro/carpeta física real):
-      Fase 1: La portada cerrada vuela desde la estantería hacia el centro.
-      Fase 2: La tapa gira 180° en perspectiva 3D sobre el lomo revelando el pliego abierto
-              con sus cartas, anillas cromadas y forro interior.
+    Animación 3D cinematográfica de apertura y cierre de Binder (como abrir/cerrar un libro físico real):
+      - Apertura (reverse=False):
+          Fase 1 (0.0 -> 0.28): La portada cerrada vuela desde la estantería al centro sobre el fondo limpio.
+          Fase 2 (0.28 -> 1.0): La tapa gira 180° en perspectiva 3D revelando el pliego abierto sin fondo duplicado.
+      - Cierre (reverse=True):
+          Fase 1 (1.0 -> 0.28): La tapa gira de 180° a 0° cerrando el binder.
+          Fase 2 (0.28 -> 0.0): El binder cerrado vuela suavemente de regreso a su posición exacta en la estantería.
     """
     animation_finished = pyqtSignal()
 
@@ -677,6 +698,9 @@ class BinderOpenAnimationOverlay(QWidget):
         origin_rect: QRectF | None = None,
         design: str = "Charizard Fuego",
         color: str = "auto",
+        reverse: bool = False,
+        shelf_pixmap: QPixmap | None = None,
+        pages_bg_pixmap: QPixmap | None = None,
     ):
         super().__init__(parent)
         self.setGeometry(parent.rect())
@@ -687,8 +711,11 @@ class BinderOpenAnimationOverlay(QWidget):
         self.board_rect = QRectF(board_rect)
         self.origin_rect = QRectF(origin_rect) if origin_rect else None
         self.base_color, self.spine_color, self.accent_color = resolve_binder_palette(design, color)
+        self.reverse = bool(reverse)
+        self.shelf_pixmap = shelf_pixmap
+        self.pages_bg_pixmap = pages_bg_pixmap
 
-        self._progress = 0.0
+        self._progress = 1.0 if self.reverse else 0.0
         self._sfx = None
         self._sound_played = False
 
@@ -702,9 +729,9 @@ class BinderOpenAnimationOverlay(QWidget):
         self.raise_()
 
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(780)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
+        self._anim.setDuration(720 if self.reverse else 780)
+        self._anim.setStartValue(1.0 if self.reverse else 0.0)
+        self._anim.setEndValue(0.0 if self.reverse else 1.0)
         self._anim.setEasingCurve(QEasingCurve.Type.Linear)
         self._anim.valueChanged.connect(self._on_tick)
         self._anim.finished.connect(self._on_done)
@@ -750,9 +777,10 @@ class BinderOpenAnimationOverlay(QWidget):
 
     def _on_tick(self, val):
         self._progress = float(val)
-        if not self._sound_played and self._progress >= 0.34:
-            self._sound_played = True
-            self._sfx = play_page_turn_sound(self)
+        if not self._sound_played:
+            if (not self.reverse and self._progress >= 0.34) or (self.reverse and self._progress <= 0.72):
+                self._sound_played = True
+                self._sfx = play_page_turn_sound(self)
         self.update()
 
     def _on_done(self):
@@ -781,17 +809,26 @@ class BinderOpenAnimationOverlay(QWidget):
         target_cx = self.board_rect.center().x()
         target_top = self.board_rect.top()
 
-        # Fondo sutil de enfoque cinematográfico que aparece y luego se desvanece
-        if p < 0.25:
-            bg_alpha = int(85 * (p / 0.25))
-        elif p < 0.80:
-            bg_alpha = 85
+        # 0. Fondo opaco limpio (cross-fade entre la estantería y el escritorio vacío del binder)
+        # Esto evita que se vea el binder abierto por detrás durante el vuelo o cierre
+        blend = max(0.0, min(1.0, (p - 0.12) / 0.32))
+        if self.shelf_pixmap and not self.shelf_pixmap.isNull():
+            painter.drawPixmap(self.rect(), self.shelf_pixmap)
         else:
-            bg_alpha = int(85 * max(0.0, (1.0 - p) / 0.20))
-        if bg_alpha > 0:
-            painter.fillRect(self.rect(), QColor(18, 12, 16, bg_alpha))
+            painter.fillRect(self.rect(), QColor("#fff5f7"))
 
-        # Posición de la portada cerrada centrada en pantalla antes de abrirse
+        if self.pages_bg_pixmap and not self.pages_bg_pixmap.isNull() and blend > 0.005:
+            painter.save()
+            painter.setOpacity(blend)
+            painter.drawPixmap(self.rect(), self.pages_bg_pixmap)
+            painter.restore()
+
+        # Sutil viñeta de enfoque cinematográfico durante el movimiento (0 en los extremos p=0 y p=1)
+        vignette_alpha = int(55 * math.sin(p * math.pi))
+        if vignette_alpha > 2:
+            painter.fillRect(self.rect(), QColor(18, 12, 16, vignette_alpha))
+
+        # Posición de la portada cerrada centrada en pantalla antes de abrirse / tras cerrarse
         closed_rect = QRectF(
             target_cx - half_w * 0.5,
             target_top,
@@ -799,7 +836,7 @@ class BinderOpenAnimationOverlay(QWidget):
             full_h,
         )
 
-        # --- FASE 1 (0.0 -> 0.28): Vuelo y acercamiento de la carpeta cerrada ---
+        # --- FASE 1 (0.0 -> 0.28): Vuelo de la carpeta cerrada desde/hacia la estantería ---
         if p < 0.28:
             t1 = self._ease_out_cubic(p / 0.28)
             if self.origin_rect and self.origin_rect.width() > 20:
@@ -819,22 +856,22 @@ class BinderOpenAnimationOverlay(QWidget):
                 start_r.height() + (closed_rect.height() - start_r.height()) * t1,
             )
 
-            # Sombra bajo la portada flotante
+            # Sombra suave bajo la portada flotante
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, int(90 * t1 + 30)))
-            painter.drawRoundedRect(cur_r.translated(0, 8), 14, 14)
+            painter.setBrush(QColor(0, 0, 0, int(85 * t1 + 20)))
+            painter.drawRoundedRect(cur_r.adjusted(6, 10, -4, 4), 14, 14)
 
             painter.drawPixmap(cur_r, self.cover_pixmap, QRectF(self.cover_pixmap.rect()))
             return
 
-        # --- FASE 2 (0.28 -> 1.0): Apertura 3D de la tapa sobre el lomo ---
+        # --- FASE 2 (0.28 -> 1.0): Apertura / Cierre 3D de la tapa sobre el lomo ---
         t2 = self._ease_in_out_cubic((p - 0.28) / 0.72)
         angle_rad = t2 * math.pi  # 0 -> pi (180°)
 
         # El lomo se desliza suavemente desde closed_rect.left() hasta target_cx
         spine_x = closed_rect.left() + (target_cx - closed_rect.left()) * t2
 
-        # 1. Mitad derecha del pliego abierto (visible debajo mientras se levanta la tapa)
+        # 1. Mitad derecha del pliego abierto (visible debajo mientras se levanta/cierra la tapa)
         right_dst = QRectF(spine_x, target_top, half_w, full_h)
         sp_w = self.spread_pixmap.width()
         sp_h = self.spread_pixmap.height()
@@ -843,12 +880,12 @@ class BinderOpenAnimationOverlay(QWidget):
 
         # Sombra bajo la mitad derecha
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 70))
-        painter.drawRoundedRect(right_dst.translated(2, 6), 12, 12)
+        painter.setBrush(QColor(0, 0, 0, 65))
+        painter.drawRoundedRect(right_dst.adjusted(2, 8, -2, 4), 12, 12)
 
         painter.drawPixmap(right_dst, self.spread_pixmap, right_src)
 
-        # Sombra interior que la tapa proyecta sobre la página derecha al irse abriendo
+        # Sombra interior que la tapa proyecta sobre la página derecha al irse abriendo/cerrando
         if t2 < 0.75:
             cover_shadow_alpha = int(165 * (1.0 - t2 / 0.75))
             sg = QLinearGradient(right_dst.left(), 0, right_dst.right(), 0)
@@ -857,7 +894,7 @@ class BinderOpenAnimationOverlay(QWidget):
             sg.setColorAt(1.0, QColor(0, 0, 0, 0))
             painter.fillRect(right_dst, sg)
 
-        # 2. Cuando la tapa ya superó ~72% de apertura, revelar suavemente la página izquierda final
+        # 2. Cuando la tapa supera ~72% de apertura, revelar suavemente la página izquierda final
         if t2 > 0.72:
             left_dst = QRectF(spine_x - half_w, target_top, half_w, full_h)
             reveal_alpha = min(1.0, (t2 - 0.72) / 0.28)
@@ -883,7 +920,7 @@ class BinderOpenAnimationOverlay(QWidget):
                 ])
                 _draw_quad_pixmap(painter, self.cover_pixmap, QRectF(self.cover_pixmap.rect()), dst_poly)
 
-                # Reflejo de luz deslizándose por la portada al abrirse
+                # Reflejo de luz deslizándose por la portada al abrirse/cerrarse
                 glare_alpha = int(75 * sin_a)
                 if glare_alpha > 4:
                     painter.setPen(Qt.PenStyle.NoPen)
