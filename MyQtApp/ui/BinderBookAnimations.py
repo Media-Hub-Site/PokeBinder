@@ -1052,3 +1052,146 @@ class CardSlideInOverlay(QWidget):
         if lip_alpha > 4:
             painter.setPen(QPen(QColor(255, 255, 255, lip_alpha), 1.6))
             painter.drawLine(QPointF(4, 3), QPointF(self.width() - 4, 3))
+
+
+class _SpreadMinimapPill(QWidget):
+    """Miniatura compacta de un pliego (2 páginas) dentro del mini-mapa del binder."""
+    clicked = pyqtSignal(int)
+
+    def __init__(self, spread_idx: int, left_ratio: float, right_ratio: float, is_active: bool, parent=None):
+        super().__init__(parent)
+        self.spread_idx = spread_idx
+        self.left_ratio = max(0.0, min(1.0, float(left_ratio)))
+        self.right_ratio = max(0.0, min(1.0, float(right_ratio)))
+        self.is_active = bool(is_active)
+        self._hovered = False
+
+        self.setFixedSize(56, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        p1 = spread_idx * 2 + 1
+        p2 = p1 + 1
+        self.setToolTip(f"Ir a páginas {p1} - {p2}")
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.spread_idx)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(0.8, 0.8, self.width() - 1.6, self.height() - 1.6)
+
+        if self.is_active:
+            bg = QColor("#f56b7b")
+            border = QColor("#d44854")
+            txt_color = QColor("#ffffff")
+        elif self._hovered:
+            bg = QColor("#ffdfe6")
+            border = QColor("#f56b7b")
+            txt_color = QColor("#5a2a3a")
+        else:
+            bg = QColor("#ffffff")
+            border = QColor("#f2b8c3")
+            txt_color = QColor("#5a2a3a")
+
+        painter.setBrush(bg)
+        painter.setPen(QPen(border, 1.4 if self.is_active else 1.0))
+        painter.drawRoundedRect(rect, 7.0, 7.0)
+
+        # Números de página (ej. 1-2)
+        p1 = self.spread_idx * 2 + 1
+        p2 = p1 + 1
+        painter.setPen(txt_color)
+        font = painter.font()
+        font.setPointSize(8)
+        font.setBold(self.is_active)
+        painter.setFont(font)
+        painter.drawText(QRectF(2, 1, self.width() - 4, 15), Qt.AlignmentFlag.AlignCenter, f"{p1}-{p2}")
+
+        # Dos mini barras de ocupación (página izquierda y página derecha)
+        bar_y = self.height() - 6.0
+        bar_w = (self.width() - 14.0) * 0.5
+        for idx, ratio in enumerate((self.left_ratio, self.right_ratio)):
+            bx = 5.0 + idx * (bar_w + 4.0)
+            track_color = QColor(255, 255, 255, 75) if self.is_active else QColor("#f3d5dc")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(track_color)
+            painter.drawRoundedRect(QRectF(bx, bar_y, bar_w, 3.0), 1.5, 1.5)
+            if ratio > 0.0:
+                fill_color = QColor("#fef08a") if self.is_active else QColor("#f56b7b")
+                painter.setBrush(fill_color)
+                painter.drawRoundedRect(QRectF(bx, bar_y, max(3.0, bar_w * ratio), 3.0), 1.5, 1.5)
+
+
+class BinderPageMinimap(QWidget):
+    """
+    Tira compacta horizontal de salto rápido de páginas para el Binder (Etapa 3).
+    Muestra mini-pliegos con indicador de ocupación de cartas y permite saltar directo con animación 3D.
+    """
+    spread_selected = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(34)
+
+        from PyQt6.QtWidgets import QScrollArea, QLabel
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setFixedHeight(32)
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._pills_layout = QHBoxLayout(self._container)
+        self._pills_layout.setContentsMargins(2, 2, 2, 2)
+        self._pills_layout.setSpacing(5)
+        self._pills_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll.setWidget(self._container)
+
+        outer.addWidget(self.scroll, 1)
+
+    def refresh(self, current_spread: int, page_counts: dict[int, int], slots_per_page: int):
+        """Reconstruye las miniaturas de pliegos según ocupación actual."""
+        while self._pills_layout.count():
+            item = self._pills_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        max_occupied_page = max(page_counts.keys()) if page_counts else 0
+        max_occupied_spread = max_occupied_page // 2
+        total_spreads = max(6, current_spread + 2, max_occupied_spread + 2)
+        denom = max(1, int(slots_per_page))
+
+        active_pill = None
+        for s_idx in range(total_spreads):
+            p1 = s_idx * 2
+            p2 = p1 + 1
+            r1 = page_counts.get(p1, 0) / denom
+            r2 = page_counts.get(p2, 0) / denom
+            pill = _SpreadMinimapPill(s_idx, r1, r2, is_active=(s_idx == current_spread))
+            pill.clicked.connect(self.spread_selected.emit)
+            self._pills_layout.addWidget(pill)
+            if s_idx == current_spread:
+                active_pill = pill
+
+        if active_pill is not None:
+            self.scroll.ensureWidgetVisible(active_pill, 40, 0)

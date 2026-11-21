@@ -1,12 +1,12 @@
 import os
 from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtCore import Qt, QRectF, QPointF, QVariantAnimation, QEasingCurve
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QLinearGradient, QRadialGradient,
     QPen, QBrush, QFont, QPixmap, QFontMetrics
 )
 
-from MyQtApp.config import BUNDLE_DIR, EXE_DIR, PERFIL_DIR, PROJECT_ROOT
+from MyQtApp.config import BUNDLE_DIR, EXE_DIR, PERFIL_DIR, PROJECT_ROOT, load_settings, scale_anim_duration
 
 
 # Temas físicos de Binder estilo Ultra PRO Pokémon Portfolio (sin emojis)
@@ -168,6 +168,8 @@ class BinderCoverWidget(QWidget):
         self._custom_color = color
         self._mode = mode or "3x3"
         self._hovered = False
+        self._hover_progress = 0.0
+        self._hover_anim = None
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMinimumSize(150, 195)
 
@@ -183,9 +185,28 @@ class BinderCoverWidget(QWidget):
         self.update()
 
     def set_hovered(self, hovered: bool):
-        if self._hovered != hovered:
-            self._hovered = hovered
+        if self._hovered == hovered:
+            return
+        self._hovered = hovered
+        target = 1.0 if hovered else 0.0
+        if not load_settings().get("animaciones", True):
+            self._hover_progress = target
             self.update()
+            return
+
+        if self._hover_anim and self._hover_anim.state() == QVariantAnimation.State.Running:
+            self._hover_anim.stop()
+        self._hover_anim = QVariantAnimation(self)
+        self._hover_anim.setDuration(scale_anim_duration(180, min_ms=70))
+        self._hover_anim.setStartValue(self._hover_progress)
+        self._hover_anim.setEndValue(target)
+        self._hover_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim.valueChanged.connect(self._on_hover_tick)
+        self._hover_anim.start()
+
+    def _on_hover_tick(self, val):
+        self._hover_progress = float(val)
+        self.update()
 
     def _effective_colors(self):
         cfg = BINDER_DESIGNS.get(self._design, BINDER_DESIGNS["Charizard Fuego"])
@@ -212,21 +233,27 @@ class BinderCoverWidget(QWidget):
 
         w = float(self.width())
         h = float(self.height())
+        hp = self._hover_progress
         margin_x = 10.0
-        margin_y = 8.0
-        pages_thickness = 7.0
+        margin_y = 9.0
+        pages_thickness = 7.0 + 2.8 * hp
 
-        cover_x = margin_x
-        cover_y = margin_y - (2.0 if self._hovered else 0.0)
-        cover_w = w - margin_x * 2 - pages_thickness
+        cover_x = margin_x - 2.2 * hp
+        cover_y = margin_y - 5.5 * hp
+        cover_w = w - margin_x * 2 - 7.0
         cover_h = h - margin_y * 2 - 4.0
 
         cfg, base, spine, strap, accent, accent2 = self._effective_colors()
 
-        # 1. Sombra proyectada debajo del binder
-        shadow_rect = QRectF(cover_x + 4, cover_y + 6, cover_w + pages_thickness, cover_h)
+        # 1. Sombra proyectada dinámica (se profundiza al sobresalir de la estantería)
+        shadow_rect = QRectF(
+            cover_x + 4.0 + 2.5 * hp,
+            cover_y + 6.0 + 5.5 * hp,
+            cover_w + pages_thickness,
+            cover_h,
+        )
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(30, 15, 25, 55 if self._hovered else 38))
+        painter.setBrush(QColor(30, 15, 25, int(38 + 42 * hp)))
         painter.drawRoundedRect(shadow_rect, 11, 11)
 
         # 2. Tapa trasera + bloque de hojas blancas apiladas en el borde derecho

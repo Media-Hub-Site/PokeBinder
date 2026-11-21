@@ -27,6 +27,7 @@ from MyQtApp.ui.BinderBookAnimations import (
     PageFlipAnimationOverlay,
     BinderOpenAnimationOverlay,
     CardSlideInOverlay,
+    BinderPageMinimap,
     render_transparent_cover_pixmap,
 )
 from MyQtApp.ui.toast import show_toast
@@ -1005,6 +1006,11 @@ class BinderView(QWidget):
         # References to current visible pages
         self.page_left = None
         self.page_right = None
+
+        # Mini-mapa de salto rápido de páginas (Etapa 3)
+        self.page_minimap = BinderPageMinimap(self)
+        self.page_minimap.spread_selected.connect(self.jump_to_spread)
+        right_layout.addWidget(self.page_minimap)
 
         # Pagination Controls
         controls_layout = QHBoxLayout()
@@ -2358,6 +2364,7 @@ class BinderView(QWidget):
         self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
         self.btn_prev.setEnabled(self.current_spread_index > 0)
         self.btn_next.setEnabled(True)
+        self.refresh_page_minimap()
 
         # Respect global animation setting
         from MyQtApp.config import load_settings
@@ -2557,6 +2564,7 @@ class BinderView(QWidget):
                 p_idx_1 = self.current_spread_index * 2
                 p_idx_2 = p_idx_1 + 1
                 self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
+                self.refresh_page_minimap()
             else:
                 state["new_spread"].deleteLater()
             self.btn_prev.setEnabled(self.current_spread_index > 0)
@@ -2707,7 +2715,36 @@ class BinderView(QWidget):
                     session.close()
 
         self.actualizar_resumen_precios_binder()
+        self.refresh_page_minimap()
 
+    def refresh_page_minimap(self):
+        """Actualiza la tira de mini-pliegos con la ocupación actual de cartas por página."""
+        if not hasattr(self, "page_minimap") or not self.page_minimap:
+            return
+        cards_dict = self._get_current_cards_dict(self.current_mode)
+        page_counts = {}
+        for key, val in cards_dict.items():
+            if not val:
+                continue
+            try:
+                p_str, _ = key.split("_", 1)
+                p_idx = int(p_str)
+                page_counts[p_idx] = page_counts.get(p_idx, 0) + 1
+            except Exception:
+                continue
+        cfg = BINDER_MODES.get(self.current_mode, BINDER_MODES["3x3"])
+        slots_per_page = cfg["rows"] * cfg["cols"]
+        self.page_minimap.refresh(self.current_spread_index, page_counts, slots_per_page)
+
+    def jump_to_spread(self, target_spread_index: int):
+        """Salta directamente a un pliego del mini-mapa usando la animación 3D de giro de página."""
+        if target_spread_index < 0 or target_spread_index == self.current_spread_index:
+            return
+        if self._active_flip_overlay is not None or self._active_open_overlay is not None:
+            return
+        direction = 1 if target_spread_index > self.current_spread_index else -1
+        self.current_spread_index = target_spread_index
+        self.update_spread(direction=direction)
 
     def prev_spread(self):
         if self.current_spread_index > 0:

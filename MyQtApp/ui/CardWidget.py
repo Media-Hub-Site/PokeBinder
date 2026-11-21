@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPixmap, QCursor, QColor, QPainter, QPainterPath, QTransform, QRadialGradient, QLinearGradient, QPen, QBrush
 from PyQt6.QtCore import (
     Qt, pyqtSignal, QPropertyAnimation, QParallelAnimationGroup,
-    QPoint, QRect, QRectF, QEasingCurve, QTimer, QDateTime, pyqtProperty
+    QPoint, QPointF, QRect, QRectF, QEasingCurve, QTimer, QDateTime, pyqtProperty
 )
 from MyQtApp.config import ICONS_DIR, IMAGES_DIR, EXE_DIR, VARIANT_COLOR_MAP, normalize_lang_code
 from MyQtApp.i18n import t, language_manager
@@ -415,18 +415,61 @@ class InteractiveCard3DWidget(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(QRectF(cx, cy, cw, ch), 14, 14)
 
-            # Arcoíris holográfico
-            if tilt_magnitude > 0.05:
-                rainbow_grad = QLinearGradient(cx, cy, cx + cw, cy + ch)
-                alpha = int(80 * tilt_magnitude)
-                rainbow_grad.setColorAt(0.0, QColor(236, 72, 153, alpha))
-                rainbow_grad.setColorAt(0.25, QColor(56, 189, 248, alpha))
-                rainbow_grad.setColorAt(0.5, QColor(74, 222, 128, alpha))
-                rainbow_grad.setColorAt(0.75, QColor(250, 204, 21, alpha))
-                rainbow_grad.setColorAt(1.0, QColor(244, 114, 182, alpha))
+            # Arcoíris holográfico reactivo al ángulo (Foil Prismático + Cosmos Sparkles - Etapa 3)
+            if tilt_magnitude > 0.03:
+                # Banda prismática que se desplaza dinámicamente con la inclinación del cursor
+                shift_x = (self._rot_y / 34.0) * cw * 0.85
+                shift_y = (-self._rot_x / 34.0) * ch * 0.85
+                rainbow_grad = QLinearGradient(
+                    cx - cw * 0.25 + shift_x,
+                    cy - ch * 0.25 + shift_y,
+                    cx + cw * 1.15 + shift_x,
+                    cy + ch * 1.15 + shift_y,
+                )
+                rainbow_grad.setSpread(QLinearGradient.Spread.ReflectSpread)
+                alpha = int(88 * tilt_magnitude)
+                rainbow_grad.setColorAt(0.00, QColor(236, 72, 153, alpha))
+                rainbow_grad.setColorAt(0.20, QColor(56, 189, 248, alpha))
+                rainbow_grad.setColorAt(0.40, QColor(74, 222, 128, alpha))
+                rainbow_grad.setColorAt(0.60, QColor(250, 204, 21, alpha))
+                rainbow_grad.setColorAt(0.80, QColor(168, 85, 247, alpha))
+                rainbow_grad.setColorAt(1.00, QColor(244, 114, 182, alpha))
 
                 painter.setBrush(rainbow_grad)
                 painter.drawRoundedRect(QRectF(cx, cy, cw, ch), 14, 14)
+
+                # Haz metálico diagonal fino que barre la carta al girarla
+                beam_pos = 0.5 + (self._rot_y - self._rot_x) / 95.0
+                beam_x = cx + beam_pos * cw
+                beam_grad = QLinearGradient(beam_x - cw * 0.22, cy, beam_x + cw * 0.22, cy + ch * 0.35)
+                beam_a = int(105 * tilt_magnitude)
+                beam_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+                beam_grad.setColorAt(0.5, QColor(255, 255, 255, beam_a))
+                beam_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+                painter.setBrush(beam_grad)
+                painter.drawRoundedRect(QRectF(cx, cy, cw, ch), 14, 14)
+
+                # Destellos micro-holográficos (Cosmos Holo Sparkles) que brillan al pasar el haz
+                sparkles = (
+                    (0.18, 0.22), (0.36, 0.16), (0.68, 0.20), (0.82, 0.28),
+                    (0.24, 0.38), (0.52, 0.34), (0.76, 0.44), (0.15, 0.54),
+                    (0.42, 0.52), (0.64, 0.58), (0.85, 0.62), (0.28, 0.72),
+                    (0.55, 0.75), (0.78, 0.80), (0.20, 0.86), (0.48, 0.88),
+                )
+                for sx_r, sy_r in sparkles:
+                    sx = cx + sx_r * cw
+                    sy = cy + sy_r * ch
+                    dist = abs((sx_r + sy_r * 0.35) - (beam_pos + 0.18))
+                    intensity = max(0.0, 1.0 - dist / 0.26) * tilt_magnitude
+                    if intensity > 0.18:
+                        sp_a = int(235 * intensity)
+                        rad = 2.0 + 3.2 * intensity
+                        painter.setPen(QPen(QColor(255, 255, 255, sp_a), 1.1))
+                        painter.drawLine(QPointF(sx - rad, sy), QPointF(sx + rad, sy))
+                        painter.drawLine(QPointF(sx, sy - rad), QPointF(sx, sy + rad))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.setBrush(QColor(255, 255, 255, sp_a))
+                        painter.drawEllipse(QPointF(sx, sy), 1.4 * intensity + 0.6, 1.4 * intensity + 0.6)
 
             painter.restore()
 
