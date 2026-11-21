@@ -164,11 +164,30 @@ DEFAULT_SETTINGS = {
     "volumen_sonido": 80,
     "pista_musica": 1,
     "animaciones": True,
+    "velocidad_animaciones": "Equilibrado",
     "tema_oscuro": False,
     "tamano_fuente": 14,
     "idioma": "Español",
     "tamano_cartas": "Normal"
 }
+
+ANIMATION_SPEED_FACTORS = {
+    "Rápido": 0.65,
+    "Equilibrado": 1.0,
+    "Cinematográfico": 1.42,
+}
+
+
+def get_animation_duration_scale() -> float:
+    """Retorna el multiplicador de duración de animaciones según el ritmo configurado."""
+    settings = load_settings()
+    speed_key = settings.get("velocidad_animaciones", "Equilibrado")
+    return ANIMATION_SPEED_FACTORS.get(speed_key, 1.0)
+
+
+def scale_anim_duration(base_ms: int, min_ms: int = 90) -> int:
+    """Escala una duración base en milisegundos según el ritmo de animaciones activo."""
+    return max(int(min_ms), int(round(base_ms * get_animation_duration_scale())))
 
 def load_settings():
     if not os.path.exists(SETTINGS_FILE):

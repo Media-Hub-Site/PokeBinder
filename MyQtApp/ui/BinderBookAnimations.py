@@ -16,7 +16,7 @@ try:
 except Exception:
     _HAS_MULTIMEDIA = False
 
-from MyQtApp.config import SOUNDS_DIR
+from MyQtApp.config import SOUNDS_DIR, scale_anim_duration
 from MyQtApp.ui.BinderCoverWidget import BINDER_DESIGNS, resolve_design_key
 
 
@@ -433,7 +433,7 @@ class PageFlipAnimationOverlay(QWidget):
             self._anim.stop()
 
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(max(140, int(duration_ms)))
+        self._anim.setDuration(scale_anim_duration(int(duration_ms), min_ms=110))
         self._anim.setStartValue(float(start_val))
         self._anim.setEndValue(float(end_val))
         self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic if start_val == 0.0 else QEasingCurve.Type.OutCubic)
@@ -729,7 +729,7 @@ class BinderOpenAnimationOverlay(QWidget):
         self.raise_()
 
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(720 if self.reverse else 780)
+        self._anim.setDuration(scale_anim_duration(720 if self.reverse else 780, min_ms=220))
         self._anim.setStartValue(1.0 if self.reverse else 0.0)
         self._anim.setEndValue(0.0 if self.reverse else 1.0)
         self._anim.setEasingCurve(QEasingCurve.Type.Linear)
@@ -950,3 +950,105 @@ class BinderOpenAnimationOverlay(QWidget):
                     painter.setBrush(QColor(0, 0, 0, shade_alpha))
                     painter.drawPolygon(dst_poly)
                     painter.restore()
+
+
+def play_sleeve_insert_sound(parent_widget=None):
+    """Reproduce un sonido suave de encaje cuando se inserta una carta en una mica."""
+    if not _HAS_MULTIMEDIA:
+        return None
+    wav_path = os.path.join(SOUNDS_DIR, "click.wav")
+    if not os.path.exists(wav_path):
+        return None
+    try:
+        sfx = QSoundEffect(parent_widget)
+        sfx.setSource(QUrl.fromLocalFile(wav_path))
+        sfx.setVolume(0.28)
+        sfx.play()
+        return sfx
+    except Exception:
+        return None
+
+
+class CardSlideInOverlay(QWidget):
+    """
+    Animación táctil de inserción de carta dentro del bolsillo plástico (Card Slide-In).
+    La carta entra desde la ranura superior de la mica deslizándose suavemente hasta encajar,
+    con un reflejo de plástico recorriendo el frente y un destello sutil en el borde superior.
+    """
+    animation_finished = pyqtSignal()
+
+    def __init__(self, slot_widget: QWidget, card_pixmap: QPixmap):
+        super().__init__(slot_widget)
+        self.setGeometry(slot_widget.rect())
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.card_pixmap = card_pixmap
+        self._progress = 0.0
+        self._sfx = play_sleeve_insert_sound(self)
+
+        self.show()
+        self.raise_()
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(scale_anim_duration(220, min_ms=100))
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_tick)
+        self._anim.finished.connect(self._on_done)
+        self._anim.start()
+
+    def _on_tick(self, val):
+        self._progress = float(val)
+        self.update()
+
+    def _on_done(self):
+        self.animation_finished.emit()
+        self.hide()
+        self.deleteLater()
+
+    def paintEvent(self, event):
+        if self.card_pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        # Clip al interior del bolsillo redondeado para que la carta aparezca desde la ranura superior
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5), 6.0, 6.0)
+        painter.setClipPath(clip_path)
+
+        t = self._progress
+        pw = self.card_pixmap.width()
+        ph = self.card_pixmap.height()
+        target_x = (self.width() - pw) * 0.5
+        target_y = (self.height() - ph) * 0.5
+
+        # Deslizar desde arriba (-48% de la altura) hasta su posición centrada
+        start_y = target_y - ph * 0.48
+        cur_y = start_y + (target_y - start_y) * t
+
+        # Sutil fondo oscuro del bolsillo detrás mientras desliza
+        painter.fillRect(self.rect(), QColor(22, 22, 28, 220))
+
+        # Carta deslizándose
+        painter.save()
+        painter.setOpacity(0.45 + 0.55 * t)
+        painter.drawPixmap(QPointF(target_x, cur_y), self.card_pixmap)
+        painter.restore()
+
+        # Reflejo translúcido de la mica plástica pasando por encima de la carta
+        glare_y = self.height() * (0.15 + 0.70 * t)
+        glare_rect = QRectF(0, glare_y - 18, self.width(), 36)
+        gg = QLinearGradient(0, glare_rect.top(), 0, glare_rect.bottom())
+        alpha_glare = int(75 * math.sin(t * math.pi))
+        gg.setColorAt(0.0, QColor(255, 255, 255, 0))
+        gg.setColorAt(0.5, QColor(255, 255, 255, alpha_glare))
+        gg.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(glare_rect, gg)
+
+        # Borde brillante de la ranura superior de la funda plástica
+        lip_alpha = int(160 * (1.0 - t))
+        if lip_alpha > 4:
+            painter.setPen(QPen(QColor(255, 255, 255, lip_alpha), 1.6))
+            painter.drawLine(QPointF(4, 3), QPointF(self.width() - 4, 3))

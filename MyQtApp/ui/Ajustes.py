@@ -960,6 +960,30 @@ class AjustesWidget(QWidget):
         row_anim, self.lbl_anim = _make_setting_row(t("Animaciones UI"), self.btn_anim_si)
         sys_layout.addLayout(row_anim)
 
+        # Fila: Ritmo de Animaciones (Etapa 1)
+        self.combo_anim_speed = QComboBox()
+        self.combo_anim_speed.addItem(f"{t('Rápido')} (1.5x)", "Rápido")
+        self.combo_anim_speed.addItem(f"{t('Equilibrado')} (1.0x)", "Equilibrado")
+        self.combo_anim_speed.addItem(f"{t('Cinematográfico')} (0.7x)", "Cinematográfico")
+        cur_speed = self.settings.get("velocidad_animaciones", "Equilibrado")
+        idx_speed = self.combo_anim_speed.findData(cur_speed)
+        if idx_speed >= 0:
+            self.combo_anim_speed.setCurrentIndex(idx_speed)
+        self.combo_anim_speed.setFixedHeight(34)
+        self.combo_anim_speed.setEnabled(encendido)
+        self.combo_anim_speed.setStyleSheet("""
+            QComboBox {
+                border: 1.5px solid #f29ca4;
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-size: 10pt;
+            }
+            QComboBox::drop-down { border: none; }
+        """)
+        self.combo_anim_speed.currentIndexChanged.connect(self.on_anim_speed_changed)
+        row_anim_speed, self.lbl_anim_speed = _make_setting_row(t("Ritmo de Animaciones"), self.combo_anim_speed)
+        sys_layout.addLayout(row_anim_speed)
+
         # Fila: Idioma
         self.combo_lang = QComboBox()
         self.combo_lang.addItems(["Español", "English", "日本語", "Français", "Português"])
@@ -1129,6 +1153,8 @@ class AjustesWidget(QWidget):
         if self.lbl_sec_sistema:
             self.lbl_sec_sistema.setText(f"  🖥️  {t('Sistema')}")
         self.lbl_anim.setText(t("Animaciones UI"))
+        if hasattr(self, "lbl_anim_speed") and self.lbl_anim_speed:
+            self.lbl_anim_speed.setText(t("Ritmo de Animaciones"))
         self.lbl_idioma.setText(t("Idioma"))
 
         if hasattr(self, 'lbl_sec_db') and self.lbl_sec_db:
@@ -1239,8 +1265,16 @@ class AjustesWidget(QWidget):
         self.btn_anim_si.setProperty("class", "pill selected" if encendido else "pill")
         self.btn_anim_si.style().unpolish(self.btn_anim_si)
         self.btn_anim_si.style().polish(self.btn_anim_si)
+        if hasattr(self, "combo_anim_speed"):
+            self.combo_anim_speed.setEnabled(encendido)
         save_settings(self.settings)
         self.animations_toggled.emit(encendido)
+
+    def on_anim_speed_changed(self, _index):
+        val = self.combo_anim_speed.currentData()
+        if val:
+            self.settings["velocidad_animaciones"] = val
+            save_settings(self.settings)
 
     def toggle_theme(self):
         app = QApplication.instance()
@@ -1283,6 +1317,13 @@ class AjustesWidget(QWidget):
         self.btn_anim_si.setProperty("class", "pill selected")
         self.btn_anim_si.style().unpolish(self.btn_anim_si)
         self.btn_anim_si.style().polish(self.btn_anim_si)
+        if hasattr(self, "combo_anim_speed"):
+            self.combo_anim_speed.blockSignals(True)
+            idx_sp = self.combo_anim_speed.findData(self.settings.get("velocidad_animaciones", "Equilibrado"))
+            if idx_sp >= 0:
+                self.combo_anim_speed.setCurrentIndex(idx_sp)
+            self.combo_anim_speed.setEnabled(True)
+            self.combo_anim_speed.blockSignals(False)
 
         app = QApplication.instance()
         if app:

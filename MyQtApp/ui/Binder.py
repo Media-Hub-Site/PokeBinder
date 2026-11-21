@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QMessageBox, QColorDialog
 )
 from PyQt6.QtCore import Qt, QMimeData, QPoint, QPointF, QSize, QEasingCurve, QPropertyAnimation, QRect, QRectF, QTimer
-from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction, QPainter, QLinearGradient, QColor, QPen
+from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction, QPainter, QLinearGradient, QColor, QPen, QShortcut, QKeySequence
 from sqlalchemy import func
 
 from MyQtApp.config import ASSETS_DIR, IMAGES_DIR, BINDER_DATA_FILE
@@ -26,6 +26,7 @@ from MyQtApp.ui.BinderBookAnimations import (
     BinderSpreadFrame,
     PageFlipAnimationOverlay,
     BinderOpenAnimationOverlay,
+    CardSlideInOverlay,
     render_transparent_cover_pixmap,
 )
 from MyQtApp.ui.toast import show_toast
@@ -251,14 +252,20 @@ class BinderSlot(QLabel):
             """)
             self.clear()
 
-    def set_card(self, id_api, nombre_archivo, pixmap, idioma=None, variante="Normal"):
+    def set_card(self, id_api, nombre_archivo, pixmap, idioma=None, variante="Normal", animate_insert=False):
         self.id_api = id_api
         self.nombre_archivo = nombre_archivo
         self.idioma = idioma
         self.variante = variante or "Normal"
         self.selected = False
+        scaled_pix = None
         if pixmap:
-            self.setPixmap(pixmap.scaled(self.card_w, self.card_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            scaled_pix = pixmap.scaled(
+                self.card_w, self.card_h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.setPixmap(scaled_pix)
         
         # Botón vertical de variante (arriba a la izquierda)
         if not self.variant_badge:
@@ -287,6 +294,25 @@ class BinderSlot(QLabel):
             self.lang_badge.hide()
 
         self.update_style()
+
+        # Animación táctil de inserción en mica (Card Slide-In) al soltar carta
+        if animate_insert and scaled_pix and not scaled_pix.isNull():
+            from MyQtApp.config import load_settings
+            if load_settings().get("animaciones", True):
+                if getattr(self, "_slide_overlay", None):
+                    try:
+                        self._slide_overlay.deleteLater()
+                    except Exception:
+                        pass
+                overlay = CardSlideInOverlay(self, scaled_pix)
+                self._slide_overlay = overlay
+                def _on_slide_done():
+                    self._slide_overlay = None
+                    if self.variant_badge and self.variant_badge.isVisible():
+                        self.variant_badge.raise_()
+                    if self.lang_badge and self.lang_badge.isVisible():
+                        self.lang_badge.raise_()
+                overlay.animation_finished.connect(_on_slide_done)
 
     def _on_slot_variant_changed(self, id_api, nueva_variante):
         self.variante = nueva_variante
@@ -1026,6 +1052,77 @@ class BinderView(QWidget):
         
         right_layout.addLayout(controls_layout)
 
+        # Indicador discreto de atajos de teclado (Etapa 1)
+        self.lbl_shortcuts_hint = QLabel(
+            f"{t('Atajos')}:  ← / → {t('Página')}   |   {t('Espacio')} {t('Zoom')}   |   Esc {t('Volver')}"
+        )
+        self.lbl_shortcuts_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_shortcuts_hint.setStyleSheet(
+            "font-size: 11px; color: #8c5a69; background: transparent; border: none; padding-top: 2px;"
+        )
+        right_layout.addWidget(self.lbl_shortcuts_hint)
+
+        self.binder_pages_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._setup_binder_shortcuts()
+
+    def _setup_binder_shortcuts(self):
+        """Configura atajos de teclado ergonómicos para navegar el binder abierto."""
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        self._sc_prev = QShortcut(QKeySequence(Qt.Key.Key_Left), self, context=ctx)
+        self._sc_prev.activated.connect(self._shortcut_prev_spread)
+
+        self._sc_next = QShortcut(QKeySequence(Qt.Key.Key_Right), self, context=ctx)
+        self._sc_next.activated.connect(self._shortcut_next_spread)
+
+        self._sc_esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self, context=ctx)
+        self._sc_esc.activated.connect(self._shortcut_close_binder)
+
+        self._sc_space = QShortcut(QKeySequence(Qt.Key.Key_Space), self, context=ctx)
+        self._sc_space.activated.connect(self._shortcut_zoom_selected)
+
+        self._sc_enter = QShortcut(QKeySequence(Qt.Key.Key_Return), self, context=ctx)
+        self._sc_enter.activated.connect(self._shortcut_zoom_selected)
+
+    def _can_trigger_binder_shortcut(self, allow_in_input=False) -> bool:
+        if self.main_stack.currentWidget() is not self.binder_pages_widget:
+            return False
+        if self._active_flip_overlay is not None or self._active_open_overlay is not None:
+            return False
+        if not allow_in_input:
+            fw = QApplication.focusWidget()
+            if isinstance(fw, (QLineEdit, QComboBox)):
+                return False
+        return True
+
+    def _shortcut_prev_spread(self):
+        if self._can_trigger_binder_shortcut() and self.current_spread_index > 0:
+            self.prev_spread()
+
+    def _shortcut_next_spread(self):
+        if self._can_trigger_binder_shortcut():
+            self.next_spread()
+
+    def _shortcut_close_binder(self):
+        if not self._can_trigger_binder_shortcut(allow_in_input=True):
+            return
+        fw = QApplication.focusWidget()
+        if isinstance(fw, QLineEdit):
+            fw.clearFocus()
+            self.binder_pages_widget.setFocus()
+            return
+        self.mostrar_vista_carpetas(animate_close=True)
+
+    def _shortcut_zoom_selected(self):
+        if not self._can_trigger_binder_shortcut():
+            return
+        for page in (self.page_left, self.page_right):
+            if not page:
+                continue
+            for slot in page.slots:
+                if slot.selected and slot.id_api:
+                    slot._on_long_press()
+                    return
+
     def mostrar_vista_carpetas(self, animate_close=False):
         """Muestra la vista de catálogo/selección de carpetas, con animación 3D de cierre al volver."""
         from MyQtApp.config import load_settings
@@ -1160,6 +1257,7 @@ class BinderView(QWidget):
         self.update_spread(direction=0)
         self.actualizar_resumen_precios_binder()
         self.main_stack.setCurrentWidget(self.binder_pages_widget)
+        self.binder_pages_widget.setFocus()
 
         if animaciones_activas:
             current_spread = self.spread_stack.currentWidget()
@@ -2604,7 +2702,7 @@ class BinderView(QWidget):
                                 pixmap = QPixmap(ruta_alt)
                         if not pixmap or pixmap.isNull():
                             pixmap = get_card_placeholder_pixmap((cfg["card_w"], cfg["card_h"]), carta.nombre)
-                        slot.set_card(card_id, n_archivo, pixmap, idioma=c_lang, variante=variante)
+                        slot.set_card(card_id, n_archivo, pixmap, idioma=c_lang, variante=variante, animate_insert=True)
                 finally:
                     session.close()
 
