@@ -15,6 +15,7 @@ from ..app.getImgs import (
     CardImageLoaderManager
 )
 from MyQtApp.ui.CardWidget import ClickableLabel, CardItemWidget, VariantLegendBar
+from MyQtApp.ui.FilterVisualBar import EnergyTypeFilterBar
 from MyQtApp.ui.toast import show_toast
 from sqlalchemy import func, and_
 from MyQtApp.config import SOUNDS_DIR
@@ -112,6 +113,13 @@ class GaleriaCartasInventario(QWidget):
         row2.addWidget(self.combo_idioma, stretch=1)
 
         header_vbox.addLayout(row2)
+
+        # Barra complementaria de filtros visuales por Energía Pokémon + Zoom rápido (Etapa 2)
+        self.energy_bar = EnergyTypeFilterBar(self)
+        self.energy_bar.type_selected.connect(self._on_energy_pill_selected)
+        self.energy_bar.zoom_changed.connect(self._on_zoom_changed)
+        self.filtros["type"].currentIndexChanged.connect(self._sync_energy_bar_from_combo)
+        header_vbox.addWidget(self.energy_bar)
 
         # Barra dedicada y vistosa de Carpetas de Colección (Issue #12 y #15, sin emojis)
         self.carpetas_bar = QFrame()
@@ -452,6 +460,9 @@ class GaleriaCartasInventario(QWidget):
             combo.setCurrentIndex(0)
             combo.blockSignals(False)
 
+        if hasattr(self, "energy_bar"):
+            self.energy_bar.set_active_type(None)
+
         if hasattr(self, 'combo_idioma'):
             self.combo_idioma.blockSignals(True)
             self.combo_idioma.setCurrentIndex(0)
@@ -519,11 +530,16 @@ class GaleriaCartasInventario(QWidget):
         tam = settings.get("tamano_cartas", "Normal")
         if tam == "Pequeño":
             size = (90, 127)
+            cols_per_row = 7
         elif tam == "Grande":
             size = (150, 212)
-        else: # Normal
+            cols_per_row = 4
+        else:  # Normal
             size = (120, 170)
+            cols_per_row = 5
         self._current_card_size = size
+        if hasattr(self, "energy_bar"):
+            self.energy_bar.set_active_zoom(tam)
 
         q = self.session.query(Cartas, UsuarioCarta.variante).join(
             UsuarioCarta,
@@ -605,7 +621,7 @@ class GaleriaCartasInventario(QWidget):
                 )
 
             col += 1
-            if col == 5:
+            if col == cols_per_row:
                 col = 0
                 row += 1
 
@@ -613,6 +629,37 @@ class GaleriaCartasInventario(QWidget):
         self.lbl_pagina.setText(f"{t('Página')} {self.current_page + 1} {t('de')} {total_pages}")
         self.btn_anterior.setEnabled(self.current_page > 0)
         self.btn_siguiente.setEnabled(self.current_page < total_pages - 1)
+
+    def _on_energy_pill_selected(self, type_val):
+        """Sincroniza el QComboBox de Tipo cuando se hace clic en una ficha visual de energía."""
+        combo = self.filtros.get("type")
+        if not combo:
+            return
+        combo.blockSignals(True)
+        if not type_val:
+            combo.setCurrentIndex(0)
+        else:
+            idx = combo.findText(type_val, Qt.MatchFlag.MatchFixedString)
+            if idx < 0 and type_val == "Lightning":
+                idx = combo.findText("Electric", Qt.MatchFlag.MatchFixedString)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+        self.reset_page_and_actualizar()
+
+    def _sync_energy_bar_from_combo(self):
+        """Sincroniza la barra visual de energías cuando cambia el QComboBox de Tipo."""
+        combo = self.filtros.get("type")
+        if combo and hasattr(self, "energy_bar"):
+            val = combo.currentText() if combo.currentIndex() > 0 else None
+            self.energy_bar.set_active_type(val)
+
+    def _on_zoom_changed(self, size_key: str):
+        """Aplica inmediatamente la escala seleccionada (Pequeño / Normal / Grande)."""
+        from MyQtApp.config import load_settings, save_settings
+        settings = load_settings()
+        settings["tamano_cartas"] = size_key
+        save_settings(settings)
+        self.actualizar_galeria()
 
     def _on_async_image_ready(self, card_key: str, local_path: str):
         widgets = self.card_widgets_por_key.get(card_key)

@@ -169,6 +169,12 @@ class CardItemWidget(QWidget):
         self.lang_badge.move(3, size[1] - badge_h - 3)
         self.lang_badge.raise_()
 
+        # Indicador geométrico de rareza apto para daltonismo (abajo a la derecha)
+        from MyQtApp.ui.FilterVisualBar import RaritySymbolBadge
+        self.rarity_badge = RaritySymbolBadge(getattr(carta, "rarity", None), self)
+        self.rarity_badge.move(size[0] - self.rarity_badge.width() - 3, size[1] - self.rarity_badge.height() - 3)
+        self.rarity_badge.raise_()
+
     def set_card_pixmap(self, pixmap: QPixmap):
         """Actualiza la imagen de la carta en vivo (usado tras descarga asíncrona .webp)."""
         if pixmap and not pixmap.isNull():
@@ -176,6 +182,8 @@ class CardItemWidget(QWidget):
             self.variant_badge.raise_()
             self.info_btn.raise_()
             self.lang_badge.raise_()
+            if hasattr(self, "rarity_badge") and self.rarity_badge:
+                self.rarity_badge.raise_()
 
 
 

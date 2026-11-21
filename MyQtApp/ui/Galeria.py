@@ -13,6 +13,7 @@ from MyQtApp.app.getImgs import (
     has_exact_lang_image, CardImageLoaderManager
 )
 from MyQtApp.ui.CardWidget import ClickableLabel, CardItemWidget, VariantLegendBar
+from MyQtApp.ui.FilterVisualBar import EnergyTypeFilterBar
 from ..session import SessionLocal
 from ..models import Cartas  # tu modelo SQLAlchemy
 
@@ -110,12 +111,18 @@ class GaleriaCartas(QWidget):
         row2.addWidget(self.combo_idioma, stretch=1)
 
         header_vbox.addLayout(row2)
+
+        # Barra complementaria de filtros visuales por Energía Pokémon + Zoom rápido (Etapa 2)
+        self.energy_bar = EnergyTypeFilterBar(self)
+        self.energy_bar.type_selected.connect(self._on_energy_pill_selected)
+        self.energy_bar.zoom_changed.connect(self._on_zoom_changed)
+        self.filtros[Cartas.type].currentIndexChanged.connect(self._sync_energy_bar_from_combo)
+        header_vbox.addWidget(self.energy_bar)
+
         self.main_layout.addLayout(header_vbox)
 
         # Scroll
         self.scroll = QScrollArea()
-
-
         self.scroll.setWidgetResizable(True)
         self.scroll.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -126,7 +133,7 @@ class GaleriaCartas(QWidget):
         self.container.setObjectName("GaleriaContainer")
         self.grid = QGridLayout(self.container)
         self.scroll.setWidget(self.container)
-        self.main_layout.addWidget(self.scroll)
+        self.main_layout.addWidget(self.scroll, stretch=1)
 
         # Paginación
         paginacion_layout = QHBoxLayout()
@@ -219,11 +226,16 @@ class GaleriaCartas(QWidget):
         tam = settings.get("tamano_cartas", "Normal")
         if tam == "Pequeño":
             size = (90, 127)
+            cols_per_row = 7
         elif tam == "Grande":
             size = (150, 212)
-        else: # Normal
+            cols_per_row = 4
+        else:  # Normal
             size = (120, 170)
+            cols_per_row = 5
         self._current_card_size = size
+        if hasattr(self, "energy_bar"):
+            self.energy_bar.set_active_zoom(tam)
 
         query = self._build_language_query()
 
@@ -288,13 +300,43 @@ class GaleriaCartas(QWidget):
                 )
 
             col += 1
-            if col == 5:
+            if col == cols_per_row:
                 row, col = row + 1, 0
 
         total_paginas = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
         self.lbl_pagina.setText(f"{t('Página')} {self.current_page+1} {t('de')} {total_paginas}")
         self.btn_anterior.setEnabled(self.current_page > 0)
         self.btn_siguiente.setEnabled(self.current_page < total_paginas - 1)
+
+    def _on_energy_pill_selected(self, type_val):
+        """Sincroniza el QComboBox de Tipo cuando se hace clic en una ficha visual de energía."""
+        combo = self.filtros.get(Cartas.type)
+        if not combo:
+            return
+        combo.blockSignals(True)
+        if not type_val:
+            combo.setCurrentIndex(0)
+        else:
+            idx = combo.findText(type_val, Qt.MatchFlag.MatchFixedString)
+            if idx < 0 and type_val == "Lightning":
+                idx = combo.findText("Electric", Qt.MatchFlag.MatchFixedString)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+        self.reset_page_and_actualizar()
+
+    def _sync_energy_bar_from_combo(self):
+        """Sincroniza la barra visual de energías cuando cambia el QComboBox de Tipo."""
+        combo = self.filtros.get(Cartas.type)
+        if combo and hasattr(self, "energy_bar"):
+            self.energy_bar.set_active_type(self._get_filter_value(combo))
+
+    def _on_zoom_changed(self, size_key: str):
+        """Aplica inmediatamente la escala seleccionada (Pequeño / Normal / Grande)."""
+        from MyQtApp.config import load_settings, save_settings
+        settings = load_settings()
+        settings["tamano_cartas"] = size_key
+        save_settings(settings)
+        self.actualizar_galeria()
 
     def _on_async_image_ready(self, card_key: str, local_path: str):
         widgets = self.card_widgets_por_key.get(card_key)
