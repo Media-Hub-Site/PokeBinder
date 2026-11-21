@@ -6,8 +6,8 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QGraphicsOpacityEffect, QLineEdit, QComboBox,
     QDialog, QMessageBox, QColorDialog
 )
-from PyQt6.QtCore import Qt, QMimeData, QPoint, QSize, QEasingCurve, QPropertyAnimation, QRect, QTimer
-from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction
+from PyQt6.QtCore import Qt, QMimeData, QPoint, QPointF, QSize, QEasingCurve, QPropertyAnimation, QRect, QRectF, QTimer
+from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction, QPainter, QLinearGradient, QColor, QPen
 from sqlalchemy import func
 
 from MyQtApp.config import ASSETS_DIR, IMAGES_DIR, BINDER_DATA_FILE
@@ -22,6 +22,11 @@ from ..app.price_updater import (
 from MyQtApp.i18n import t, language_manager
 from MyQtApp.ui.CardWidget import CardZoomOverlay, VariantBadgeButton, LanguageBadgeLabel
 from MyQtApp.ui.BinderCoverWidget import BinderCoverWidget, BINDER_DESIGNS, resolve_design_key
+from MyQtApp.ui.BinderBookAnimations import (
+    BinderSpreadFrame,
+    PageFlipAnimationOverlay,
+    BinderOpenAnimationOverlay,
+)
 from MyQtApp.ui.toast import show_toast
 
 
@@ -217,26 +222,30 @@ class BinderSlot(QLabel):
             if self.selected:
                 self.setStyleSheet("""
                     QLabel {
-                        background-color: rgba(225, 29, 72, 0.22);
-                        border: 3.5px solid #e11d48;
-                        border-radius: 8px;
+                        background-color: rgba(225, 29, 72, 0.28);
+                        border: 3px solid #f43f5e;
+                        border-radius: 7px;
                     }
                 """)
             else:
                 self.setStyleSheet("""
                     QLabel {
-                        background-color: transparent;
-                        border: 2px solid #f29ca4;
-                        border-radius: 8px;
+                        background-color: rgba(255, 255, 255, 0.04);
+                        border: 1.5px solid rgba(255, 255, 255, 0.22);
+                        border-radius: 7px;
                     }
                 """)
         else:
             self.selected = False
             self.setStyleSheet("""
                 QLabel {
-                    background-color: white;
-                    border: 2px dashed #f29ca4;
-                    border-radius: 8px;
+                    background-color: rgba(255, 255, 255, 0.05);
+                    border: 1.5px dashed rgba(255, 255, 255, 0.22);
+                    border-radius: 7px;
+                }
+                QLabel:hover {
+                    background-color: rgba(255, 255, 255, 0.11);
+                    border: 1.5px dashed rgba(244, 143, 177, 0.70);
                 }
             """)
             self.clear()
@@ -667,31 +676,81 @@ class InventorySidebar(QWidget):
 
 
 class BinderPage(QWidget):
-    def __init__(self, page_index, binder_view, rows, cols, slot_w, slot_h, card_w, card_h, parent=None):
+    def __init__(self, page_index, binder_view, rows, cols, slot_w, slot_h, card_w, card_h, is_left=True, parent=None):
         super().__init__(parent)
         self.page_index = page_index
         self.binder_view = binder_view
-        
+        self.rows = rows
+        self.cols = cols
+        self.is_left = is_left
+
         layout = QGridLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(10, 10, 10, 10)
-        
+
         self.slots = []
         for r in range(rows):
             for c in range(cols):
                 slot_idx = r * cols + c
                 slot = BinderSlot(
-                    page_index, 
-                    slot_idx, 
-                    binder_view=binder_view, 
-                    slot_w=slot_w, 
-                    slot_h=slot_h, 
-                    card_w=card_w, 
+                    page_index,
+                    slot_idx,
+                    binder_view=binder_view,
+                    slot_w=slot_w,
+                    slot_h=slot_h,
+                    card_w=card_w,
                     card_h=card_h
                 )
                 layout.addWidget(slot, r, c)
                 self.slots.append(slot)
-                
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+
+        # Base de hoja de polipropileno oscuro mate estilo Ultra PRO
+        sheet_grad = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        sheet_grad.setColorAt(0.0, QColor(34, 34, 42, 240))
+        sheet_grad.setColorAt(0.5, QColor(24, 24, 30, 245))
+        sheet_grad.setColorAt(1.0, QColor(18, 18, 24, 248))
+        painter.setBrush(sheet_grad)
+        painter.setPen(QPen(QColor(255, 255, 255, 36), 1.2))
+        painter.drawRoundedRect(rect, 7, 7)
+
+        # Costuras termoselladas sutiles entre los bolsillos
+        seam_pen = QPen(QColor(255, 255, 255, 22), 1.0, Qt.PenStyle.DotLine)
+        painter.setPen(seam_pen)
+        if self.cols > 1:
+            for c in range(1, self.cols):
+                x = rect.left() + (rect.width() * c / self.cols)
+                painter.drawLine(QPointF(x, rect.top() + 6), QPointF(x, rect.bottom() - 6))
+        if self.rows > 1:
+            for r in range(1, self.rows):
+                y = rect.top() + (rect.height() * r / self.rows)
+                painter.drawLine(QPointF(rect.left() + 6, y), QPointF(rect.right() - 6, y))
+
+        # Reflejo diagonal sutil simulando mica plástica transparente
+        sheen = QLinearGradient(rect.left(), rect.top(), rect.right(), rect.bottom())
+        sheen.setColorAt(0.0, QColor(255, 255, 255, 22))
+        sheen.setColorAt(0.30, QColor(255, 255, 255, 5))
+        sheen.setColorAt(0.55, QColor(255, 255, 255, 14))
+        sheen.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(sheen)
+        painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 6, 6)
+
+        # Pequeño sello circular holográfico discreto en la esquina inferior exterior
+        hx = rect.left() + 12 if self.is_left else rect.right() - 12
+        hy = rect.bottom() - 12
+        holo = QLinearGradient(hx - 5, hy - 5, hx + 5, hy + 5)
+        holo.setColorAt(0.0, QColor(180, 230, 255, 110))
+        holo.setColorAt(0.5, QColor(255, 200, 240, 125))
+        holo.setColorAt(1.0, QColor(210, 255, 210, 110))
+        painter.setBrush(holo)
+        painter.setPen(QPen(QColor(255, 255, 255, 90), 0.8))
+        painter.drawEllipse(QPointF(hx, hy), 4.5, 4.5)
+
     def get_slot(self, slot_index):
         if 0 <= slot_index < len(self.slots):
             return self.slots[slot_index]
@@ -706,6 +765,9 @@ class BinderView(QWidget):
         self.current_folder_id = None
         self.current_spread_index = 0 # 0 means pages 0 and 1
         self.current_mode = "3x3" # mode determined by folder
+        self._active_flip_overlay = None
+        self._active_open_overlay = None
+        self._drag_turn_state = None
         
         self.load_binder_data()
         
@@ -967,11 +1029,36 @@ class BinderView(QWidget):
         self.render_folders_grid()
         self.main_stack.setCurrentWidget(self.folders_view_widget)
 
-    def abrir_carpeta(self, folder_id):
-        """Abre la carpeta seleccionada y pasa a la vista de páginas."""
+    def _get_current_folder_theme(self) -> tuple[str, str, str, str]:
+        """Retorna (name, design, color, mode) de la carpeta actual."""
+        folders = self.get_user_folders()
+        folder = folders.get(self.current_folder_id, {})
+        name = folder.get("name", "Binder")
+        design = resolve_design_key(folder.get("design", "Charizard Fuego"))
+        color = folder.get("color", "auto")
+        mode = folder.get("mode", self.current_mode)
+        return name, design, color, mode
+
+    def abrir_carpeta(self, folder_id, origin_widget=None):
+        """Abre la carpeta seleccionada con animación 3D de apertura de libro/binder."""
         folders = self.get_user_folders()
         if folder_id not in folders:
             return
+
+        # Capturar posición inicial de la portada en la estantería antes de cambiar de vista
+        origin_rect_in_stack = None
+        if origin_widget is not None:
+            try:
+                top_left = origin_widget.mapTo(self.main_stack, QPoint(0, 0))
+                origin_rect_in_stack = QRectF(
+                    float(top_left.x()),
+                    float(top_left.y()),
+                    float(origin_widget.width()),
+                    float(origin_widget.height()),
+                )
+            except Exception:
+                origin_rect_in_stack = None
+
         self.current_folder_id = folder_id
         folder = folders[folder_id]
         self.current_mode = folder.get("mode", "3x3")
@@ -981,6 +1068,70 @@ class BinderView(QWidget):
         self.update_spread(direction=0)
         self.actualizar_resumen_precios_binder()
         self.main_stack.setCurrentWidget(self.binder_pages_widget)
+
+        from MyQtApp.config import load_settings
+        animaciones_activas = load_settings().get("animaciones", True)
+        if animaciones_activas:
+            QTimer.singleShot(0, lambda r=origin_rect_in_stack: self._run_book_open_animation(r))
+
+    def _run_book_open_animation(self, origin_rect_in_stack=None):
+        """Lanza el overlay 3D de apertura del binder sobre la vista recién cargada."""
+        try:
+            current_spread = self.spread_stack.currentWidget()
+            if not current_spread or not isinstance(current_spread, BinderSpreadFrame):
+                return
+
+            # Asegurar geometría final calculada antes de capturar los pixmaps
+            self.binder_pages_widget.layout().activate()
+            current_spread.layout().activate()
+
+            board_local = current_spread.get_board_rect()
+            if board_local.width() < 80 or board_local.height() < 80:
+                return
+
+            # Capturar el pliego abierto exacto
+            spread_pix = current_spread.grab(board_local.toRect())
+            if spread_pix.isNull():
+                return
+
+            # Renderizar portada física a alta resolución con el tamaño exacto de una hoja
+            name, design, color, mode = self._get_current_folder_theme()
+            cover_w = max(140, int(board_local.width() * 0.5))
+            cover_h = max(180, int(board_local.height()))
+            temp_cover = BinderCoverWidget(name=name, design=design, color=color, mode=mode)
+            temp_cover.resize(cover_w, cover_h)
+            cover_pix = temp_cover.grab()
+            temp_cover.deleteLater()
+
+            # Mapear el rectángulo del binder a coordenadas de self.main_stack
+            top_left_stack = current_spread.mapTo(self.main_stack, board_local.topLeft().toPoint())
+            board_in_stack = QRectF(
+                float(top_left_stack.x()),
+                float(top_left_stack.y()),
+                board_local.width(),
+                board_local.height(),
+            )
+
+            if self._active_open_overlay:
+                try:
+                    self._active_open_overlay.deleteLater()
+                except Exception:
+                    pass
+                self._active_open_overlay = None
+
+            overlay = BinderOpenAnimationOverlay(
+                parent=self.main_stack,
+                cover_pixmap=cover_pix,
+                spread_pixmap=spread_pix,
+                board_rect=board_in_stack,
+                origin_rect=origin_rect_in_stack,
+                design=design,
+                color=color,
+            )
+            self._active_open_overlay = overlay
+            overlay.animation_finished.connect(lambda: setattr(self, "_active_open_overlay", None))
+        except Exception as e:
+            print(f"Error en animación de apertura de binder: {e}")
 
     def _extract_folder_card_entries(self, folder_data: dict) -> list[tuple[str, str]]:
         """Retorna lista de (id_api, idioma) de todas las cartas colocadas en el modo activo de la carpeta."""
@@ -1312,7 +1463,7 @@ class BinderView(QWidget):
 
         def on_frame_click(event):
             if event.button() == Qt.MouseButton.LeftButton:
-                self.abrir_carpeta(f_id)
+                self.abrir_carpeta(f_id, origin_widget=cover)
 
         frame.enterEvent = on_enter
         frame.leaveEvent = on_leave
@@ -1939,18 +2090,22 @@ class BinderView(QWidget):
         self.anim_opacity_new.finished.connect(on_finished)
         
     def create_spread_widget(self, spread_index, mode=None):
-        spread_widget = QWidget()
-        spread_layout = QHBoxLayout(spread_widget)
-        spread_layout.setSpacing(40) # Gap between pages
-        spread_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        spread_layout.setContentsMargins(0, 0, 0, 0)
-        
+        _, design, color, _ = self._get_current_folder_theme()
+        spread_widget = BinderSpreadFrame(
+            design=design,
+            color=color,
+            can_go_prev=(spread_index > 0),
+        )
+        spread_widget.drag_turn_started.connect(self._on_drag_turn_started)
+        spread_widget.drag_turn_moved.connect(self._on_drag_turn_moved)
+        spread_widget.drag_turn_released.connect(self._on_drag_turn_released)
+
         p_idx_1 = spread_index * 2
         p_idx_2 = p_idx_1 + 1
-        
+
         target_mode = mode if mode else self.current_mode
         cfg = BINDER_MODES[target_mode]
-        
+
         page_left = BinderPage(
             p_idx_1, self,
             rows=cfg["rows"],
@@ -1958,7 +2113,8 @@ class BinderView(QWidget):
             slot_w=cfg["slot_w"],
             slot_h=cfg["slot_h"],
             card_w=cfg["card_w"],
-            card_h=cfg["card_h"]
+            card_h=cfg["card_h"],
+            is_left=True,
         )
         page_right = BinderPage(
             p_idx_2, self,
@@ -1967,102 +2123,239 @@ class BinderView(QWidget):
             slot_w=cfg["slot_w"],
             slot_h=cfg["slot_h"],
             card_w=cfg["card_w"],
-            card_h=cfg["card_h"]
+            card_h=cfg["card_h"],
+            is_left=False,
         )
-        
+
         # Populate slots
         self.populate_page(page_left, p_idx_1, target_mode)
         self.populate_page(page_right, p_idx_2, target_mode)
-        
-        spread_layout.addWidget(page_left)
-        spread_layout.addWidget(page_right)
-        
+
+        spread_widget.spread_layout.addWidget(page_left)
+        spread_widget.spread_layout.addWidget(page_right)
+
         return spread_widget, page_left, page_right
 
     def update_spread(self, direction=0):
         new_spread, new_left, new_right = self.create_spread_widget(self.current_spread_index)
-        
+
         # UI controls update
         p_idx_1 = self.current_spread_index * 2
         p_idx_2 = p_idx_1 + 1
         self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
         self.btn_prev.setEnabled(self.current_spread_index > 0)
         self.btn_next.setEnabled(True)
-        
+
         # Respect global animation setting
         from MyQtApp.config import load_settings
         settings = load_settings()
         animaciones_activas = settings.get("animaciones", True)
-        
+
         if direction == 0 or not animaciones_activas:
-            # Clear old spreads
             while self.spread_stack.count() > 0:
                 widget = self.spread_stack.widget(0)
                 self.spread_stack.removeWidget(widget)
                 widget.deleteLater()
-                
+
             self.spread_stack.addWidget(new_spread)
             self.spread_stack.setCurrentWidget(new_spread)
             self.page_left = new_left
             self.page_right = new_right
         else:
-            self.slide_transition(new_spread, direction, new_left, new_right)
+            self.flip_page_transition(new_spread, direction, new_left, new_right)
 
-    def slide_transition(self, new_spread, direction, new_left, new_right):
+    def _capture_spread_geometries(self, spread_widget, left_w, right_w):
+        """Retorna (board_rect, left_rect, right_rect) mapeados a self.spread_stack."""
+        board_local = spread_widget.get_board_rect()
+        b_tl = spread_widget.mapTo(self.spread_stack, board_local.topLeft().toPoint())
+        board_rect = QRectF(float(b_tl.x()), float(b_tl.y()), board_local.width(), board_local.height())
+
+        l_tl = left_w.mapTo(self.spread_stack, QPoint(0, 0))
+        left_rect = QRectF(float(l_tl.x()), float(l_tl.y()), float(left_w.width()), float(left_w.height()))
+
+        r_tl = right_w.mapTo(self.spread_stack, QPoint(0, 0))
+        right_rect = QRectF(float(r_tl.x()), float(r_tl.y()), float(right_w.width()), float(right_w.height()))
+        return board_rect, left_rect, right_rect
+
+    def flip_page_transition(self, new_spread, direction, new_left, new_right):
+        """Transición 3D realista de cambio de página con curvatura orgánica, sombras y anillas."""
         current_spread = self.spread_stack.currentWidget()
-        if not current_spread:
+        if (
+            not current_spread
+            or not isinstance(current_spread, BinderSpreadFrame)
+            or not self.page_left
+            or not self.page_right
+        ):
             self.spread_stack.addWidget(new_spread)
             self.spread_stack.setCurrentWidget(new_spread)
             self.page_left = new_left
             self.page_right = new_right
             return
-            
+
+        if self._active_flip_overlay is not None:
+            try:
+                self._active_flip_overlay.deleteLater()
+            except Exception:
+                pass
+            self._active_flip_overlay = None
+
+        # Capturar las 2 páginas actuales
+        old_left_pix = self.page_left.grab()
+        old_right_pix = self.page_right.grab()
+        board_rect, left_rect, right_rect = self._capture_spread_geometries(
+            current_spread, self.page_left, self.page_right
+        )
+
+        # Preparar nuevo pliego con la misma geometría exacta para capturar sus páginas
         self.spread_stack.addWidget(new_spread)
-        
-        # Determine width of the stacked widget
-        width = self.spread_stack.width()
-        if width <= 0:
-            width = 750 # Fallback width
-            
-        # Position the new spread offscreen
-        new_spread.move(direction * width, 0)
-        new_spread.show()
-        
-        # Disable buttons temporarily during animation to prevent rapid clicks
-        self.btn_prev.setEnabled(False)
-        self.btn_next.setEnabled(False)
-        
-        # Update references immediately so drag-and-drop resolves to correct page
+        new_spread.setGeometry(current_spread.geometry())
+        new_spread.layout().activate()
+        new_left_pix = new_left.grab()
+        new_right_pix = new_right.grab()
+
+        # Cambiar el widget subyacente de inmediato; el overlay 3D cubre la transición sin parpadeo
+        self.spread_stack.setCurrentWidget(new_spread)
+        self.spread_stack.removeWidget(current_spread)
+        current_spread.deleteLater()
+
         self.page_left = new_left
         self.page_right = new_right
-        
-        # Create animations
-        self.anim_old = QPropertyAnimation(current_spread, b"pos", self)
-        self.anim_old.setDuration(220)
-        self.anim_old.setStartValue(current_spread.pos())
-        self.anim_old.setEndValue(QPoint(-direction * width, 0))
-        self.anim_old.setEasingCurve(QEasingCurve.Type.OutCubic)
-        
-        self.anim_new = QPropertyAnimation(new_spread, b"pos", self)
-        self.anim_new.setDuration(220)
-        self.anim_new.setStartValue(new_spread.pos())
-        self.anim_new.setEndValue(QPoint(0, 0))
-        self.anim_new.setEasingCurve(QEasingCurve.Type.OutCubic)
-        
-        # Start animations
-        self.anim_old.start()
-        self.anim_new.start()
-        
-        def on_finished():
-            self.spread_stack.setCurrentWidget(new_spread)
-            self.spread_stack.removeWidget(current_spread)
-            current_spread.deleteLater()
-            
-            # Re-enable pagination controls correctly
+        self.btn_prev.setEnabled(False)
+        self.btn_next.setEnabled(False)
+
+        _, design, color, _ = self._get_current_folder_theme()
+        overlay = PageFlipAnimationOverlay(
+            parent=self.spread_stack,
+            old_left_pix=old_left_pix,
+            old_right_pix=old_right_pix,
+            new_left_pix=new_left_pix,
+            new_right_pix=new_right_pix,
+            board_rect=board_rect,
+            left_page_rect=left_rect,
+            right_page_rect=right_rect,
+            direction=direction,
+            design=design,
+            color=color,
+        )
+        self._active_flip_overlay = overlay
+
+        def on_flip_done(_completed):
+            self._active_flip_overlay = None
             self.btn_prev.setEnabled(self.current_spread_index > 0)
             self.btn_next.setEnabled(True)
-            
-        self.anim_new.finished.connect(on_finished)
+
+        overlay.flip_completed.connect(on_flip_done)
+        overlay.start_auto_flip(duration_ms=520, start_val=0.0, end_val=1.0)
+
+    def _on_drag_turn_started(self, direction: int, start_x: float):
+        """Inicia un giro de página interactivo arrastrando con el mouse desde el borde del binder."""
+        if self._active_flip_overlay is not None or self._drag_turn_state is not None:
+            return
+        if direction == -1 and self.current_spread_index <= 0:
+            return
+
+        from MyQtApp.config import load_settings
+        if not load_settings().get("animaciones", True):
+            if direction == 1:
+                self.next_spread()
+            else:
+                self.prev_spread()
+            return
+
+        current_spread = self.spread_stack.currentWidget()
+        if not current_spread or not isinstance(current_spread, BinderSpreadFrame):
+            return
+
+        target_spread_index = self.current_spread_index + direction
+        new_spread, new_left, new_right = self.create_spread_widget(target_spread_index)
+
+        old_left_pix = self.page_left.grab()
+        old_right_pix = self.page_right.grab()
+        board_rect, left_rect, right_rect = self._capture_spread_geometries(
+            current_spread, self.page_left, self.page_right
+        )
+
+        # Maquetar offscreen para capturar el pliego destino
+        new_spread.setGeometry(current_spread.geometry())
+        new_spread.layout().activate()
+        new_left_pix = new_left.grab()
+        new_right_pix = new_right.grab()
+
+        _, design, color, _ = self._get_current_folder_theme()
+        overlay = PageFlipAnimationOverlay(
+            parent=self.spread_stack,
+            old_left_pix=old_left_pix,
+            old_right_pix=old_right_pix,
+            new_left_pix=new_left_pix,
+            new_right_pix=new_right_pix,
+            board_rect=board_rect,
+            left_page_rect=left_rect,
+            right_page_rect=right_rect,
+            direction=direction,
+            design=design,
+            color=color,
+        )
+        overlay.set_progress(0.05)
+        self._active_flip_overlay = overlay
+        self.btn_prev.setEnabled(False)
+        self.btn_next.setEnabled(False)
+
+        self._drag_turn_state = {
+            "direction": direction,
+            "start_x": start_x,
+            "board_width": max(200.0, board_rect.width() * 0.85),
+            "target_index": target_spread_index,
+            "new_spread": new_spread,
+            "new_left": new_left,
+            "new_right": new_right,
+            "current_spread": current_spread,
+            "overlay": overlay,
+        }
+
+    def _on_drag_turn_moved(self, current_x: float):
+        """Actualiza el ángulo de la hoja en tiempo real según la posición del cursor."""
+        state = self._drag_turn_state
+        if not state:
+            return
+        dx = (state["start_x"] - current_x) if state["direction"] == 1 else (current_x - state["start_x"])
+        prog = max(0.02, min(0.98, 0.05 + dx / state["board_width"]))
+        state["overlay"].set_progress(prog)
+
+    def _on_drag_turn_released(self, _end_x: float):
+        """Al soltar el mouse, completa el giro si pasó el umbral o regresa suavemente la hoja."""
+        state = self._drag_turn_state
+        if not state:
+            return
+        self._drag_turn_state = None
+        overlay = state["overlay"]
+        prog = overlay.progress()
+        complete = prog >= 0.30
+
+        def on_finish(did_complete):
+            self._active_flip_overlay = None
+            if did_complete:
+                self.current_spread_index = state["target_index"]
+                self.spread_stack.addWidget(state["new_spread"])
+                self.spread_stack.setCurrentWidget(state["new_spread"])
+                self.spread_stack.removeWidget(state["current_spread"])
+                state["current_spread"].deleteLater()
+                self.page_left = state["new_left"]
+                self.page_right = state["new_right"]
+                p_idx_1 = self.current_spread_index * 2
+                p_idx_2 = p_idx_1 + 1
+                self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
+            else:
+                state["new_spread"].deleteLater()
+            self.btn_prev.setEnabled(self.current_spread_index > 0)
+            self.btn_next.setEnabled(True)
+
+        overlay.flip_completed.connect(on_finish)
+        if complete:
+            rem_ms = max(140, int(420 * (1.0 - prog)))
+            overlay.start_auto_flip(duration_ms=rem_ms, start_val=prog, end_val=1.0)
+        else:
+            rem_ms = max(140, int(360 * prog))
+            overlay.start_auto_flip(duration_ms=rem_ms, start_val=prog, end_val=0.0)
 
     def populate_page(self, page_widget, page_idx, mode=None):
         session = SessionLocal()

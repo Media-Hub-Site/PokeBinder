@@ -1,0 +1,915 @@
+import math
+import os
+from PyQt6.QtWidgets import QWidget, QHBoxLayout
+from PyQt6.QtCore import (
+    Qt, QRect, QRectF, QPoint, QPointF, QVariantAnimation,
+    QEasingCurve, pyqtSignal, QUrl
+)
+from PyQt6.QtGui import (
+    QPainter, QPainterPath, QColor, QLinearGradient, QRadialGradient,
+    QPen, QBrush, QPixmap, QPolygonF, QTransform
+)
+
+try:
+    from PyQt6.QtMultimedia import QSoundEffect
+    _HAS_MULTIMEDIA = True
+except Exception:
+    _HAS_MULTIMEDIA = False
+
+from MyQtApp.config import SOUNDS_DIR
+from MyQtApp.ui.BinderCoverWidget import BINDER_DESIGNS, resolve_design_key
+
+
+def resolve_binder_palette(design: str, color: str = "auto") -> tuple[QColor, QColor, QColor]:
+    """Retorna (base_color, spine_color, accent_color) para el diseño del binder."""
+    key = resolve_design_key(design)
+    theme = BINDER_DESIGNS.get(key, BINDER_DESIGNS["Charizard Fuego"])
+    base = QColor(theme["base"])
+    spine = QColor(theme["spine"])
+    accent = QColor(theme["accent"])
+    if color and color != "auto":
+        c = QColor(color)
+        if c.isValid():
+            base = c
+            spine = c.darker(145)
+    return base, spine, accent
+
+
+def play_page_turn_sound(parent_widget=None):
+    """Reproduce suavemente el sonido de cambio de página/mica si está disponible."""
+    if not _HAS_MULTIMEDIA:
+        return None
+    wav_path = os.path.join(SOUNDS_DIR, "paginas.wav")
+    if not os.path.exists(wav_path):
+        return None
+    try:
+        sfx = QSoundEffect(parent_widget)
+        sfx.setSource(QUrl.fromLocalFile(wav_path))
+        sfx.setVolume(0.45)
+        sfx.play()
+        return sfx
+    except Exception:
+        return None
+
+
+def draw_binder_rings(painter: QPainter, spine_x: float, top_y: float, bottom_y: float, ring_count: int = 3):
+    """Dibuja anillas metálicas cromadas realistas en el lomo central del binder."""
+    height = max(60.0, bottom_y - top_y)
+    if ring_count == 3:
+        ratios = (0.18, 0.50, 0.82)
+    else:
+        ratios = tuple((i + 1) / (ring_count + 1) for i in range(ring_count))
+
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    for r in ratios:
+        cy = top_y + height * r
+
+        # Orificios perforados en las micas izquierda y derecha
+        for side in (-1, 1):
+            hx = spine_x + side * 19.0
+            painter.setPen(QPen(QColor(255, 255, 255, 55), 1.0))
+            painter.setBrush(QColor(12, 12, 16, 220))
+            painter.drawEllipse(QPointF(hx, cy), 4.5, 4.5)
+
+        # Sombra proyectada de la anilla sobre el lomo
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 115))
+        painter.drawRoundedRect(QRectF(spine_x - 20.5, cy - 3.0, 41.0, 9.5), 4.5, 4.5)
+
+        # Aro metálico cromado (gradiente vertical simulando cilindro reflectante)
+        ring_rect = QRectF(spine_x - 20.0, cy - 5.2, 40.0, 9.2)
+        chrome = QLinearGradient(ring_rect.left(), ring_rect.top(), ring_rect.left(), ring_rect.bottom())
+        chrome.setColorAt(0.0, QColor("#52525b"))
+        chrome.setColorAt(0.22, QColor("#e4e4e7"))
+        chrome.setColorAt(0.42, QColor("#ffffff"))
+        chrome.setColorAt(0.68, QColor("#a1a1aa"))
+        chrome.setColorAt(1.0, QColor("#27272a"))
+
+        painter.setBrush(chrome)
+        painter.setPen(QPen(QColor("#18181b"), 1.0))
+        painter.drawRoundedRect(ring_rect, 4.5, 4.5)
+
+        # Reflejo horizontal sutil en el centro superior del aro
+        shine_rect = QRectF(spine_x - 13.0, cy - 3.6, 26.0, 2.2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 190))
+        painter.drawRoundedRect(shine_rect, 1.0, 1.0)
+
+        # Bisagra/remache central metálico sutil
+        painter.setBrush(QColor(60, 60, 68, 120))
+        painter.drawRect(QRectF(spine_x - 0.8, cy - 4.8, 1.6, 8.4))
+
+    painter.restore()
+
+
+def _paint_binder_board_background(
+    painter: QPainter,
+    rect: QRectF,
+    base_color: QColor,
+    spine_color: QColor,
+    accent_color: QColor,
+    draw_rings: bool = True,
+    hover_corner: str | None = None,
+):
+    """Dibuja el cuerpo físico del binder abierto: tapas, grosor de hojas, fondo vinilo y anillas."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    outer = rect.adjusted(6, 4, -6, -8)
+    cx = outer.center().x()
+
+    # 1. Sombra proyectada sobre la mesa
+    shadow_path = QPainterPath()
+    shadow_path.addRoundedRect(outer.translated(0, 5), 14, 14)
+    painter.fillPath(shadow_path, QColor(0, 0, 0, 65))
+
+    # 2. Tapa dura exterior (cuero / polipiel del tema del binder)
+    board_grad = QLinearGradient(outer.left(), outer.top(), outer.right(), outer.bottom())
+    board_grad.setColorAt(0.0, base_color.lighter(115))
+    board_grad.setColorAt(0.48, base_color)
+    board_grad.setColorAt(0.50, spine_color.darker(115))
+    board_grad.setColorAt(0.52, base_color)
+    board_grad.setColorAt(1.0, base_color.darker(118))
+
+    board_path = QPainterPath()
+    board_path.addRoundedRect(outer, 13, 13)
+    painter.fillPath(board_path, board_grad)
+    painter.setPen(QPen(spine_color.darker(130), 1.6))
+    painter.drawPath(board_path)
+
+    # Costura perimetral estilo Ultra PRO
+    stitch_rect = outer.adjusted(4.5, 4.5, -4.5, -4.5)
+    stitch_pen = QPen(QColor(255, 255, 255, 50), 1.0, Qt.PenStyle.DashLine)
+    stitch_pen.setDashPattern([4, 3])
+    painter.setPen(stitch_pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(stitch_rect, 10, 10)
+
+    # 3. Grosor 3D de hojas apiladas en los bordes exteriores (izquierdo y derecho)
+    inner = outer.adjusted(12, 9, -12, -9)
+    for layer in range(3):
+        offset = (3 - layer) * 2.0
+        alpha = 155 - layer * 25
+        # Borde izquierdo apilado
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(235, 232, 238, alpha))
+        painter.drawRoundedRect(
+            QRectF(inner.left() - offset, inner.top() + layer * 1.2, 4.0, inner.height() - layer * 2.4),
+            1.5, 1.5
+        )
+        # Borde derecho apilado
+        painter.drawRoundedRect(
+            QRectF(inner.right() + offset - 4.0, inner.top() + layer * 1.2, 4.0, inner.height() - layer * 2.4),
+            1.5, 1.5
+        )
+
+    # 4. Interior oscuro aterciopelado del binder
+    inner_grad = QRadialGradient(cx, inner.center().y(), inner.width() * 0.65)
+    inner_grad.setColorAt(0.0, QColor("#27272e"))
+    inner_grad.setColorAt(1.0, QColor("#141418"))
+    painter.setBrush(inner_grad)
+    painter.setPen(QPen(QColor(255, 255, 255, 24), 1.0))
+    painter.drawRoundedRect(inner, 8, 8)
+
+    # 5. Hendidura / sombra del lomo central
+    gutter_w = 50.0
+    gutter_rect = QRectF(cx - gutter_w / 2.0, inner.top(), gutter_w, inner.height())
+    gutter = QLinearGradient(gutter_rect.left(), 0, gutter_rect.right(), 0)
+    gutter.setColorAt(0.0, QColor(0, 0, 0, 0))
+    gutter.setColorAt(0.32, QColor(0, 0, 0, 95))
+    gutter.setColorAt(0.50, QColor(0, 0, 0, 175))
+    gutter.setColorAt(0.68, QColor(0, 0, 0, 95))
+    gutter.setColorAt(1.0, QColor(0, 0, 0, 0))
+    painter.fillRect(gutter_rect, gutter)
+
+    # Línea de pliegue del lomo
+    painter.setPen(QPen(QColor(255, 255, 255, 22), 1.0))
+    painter.drawLine(QPointF(cx, inner.top() + 4), QPointF(cx, inner.bottom() - 4))
+
+    # 6. Indicador sutil de esquina interactiva ("arrastra para pasar página")
+    if hover_corner == "right":
+        peel = QPainterPath()
+        rx, by = inner.right() - 2, inner.bottom() - 2
+        peel.moveTo(rx, by - 36)
+        peel.lineTo(rx - 36, by)
+        peel.lineTo(rx, by)
+        peel.closeSubpath()
+        pg = QLinearGradient(rx - 34, by - 34, rx, by)
+        pg.setColorAt(0.0, QColor(255, 255, 255, 140))
+        pg.setColorAt(0.5, QColor(accent_color.red(), accent_color.green(), accent_color.blue(), 110))
+        pg.setColorAt(1.0, QColor(255, 255, 255, 30))
+        painter.fillPath(peel, pg)
+    elif hover_corner == "left":
+        peel = QPainterPath()
+        lx, by = inner.left() + 2, inner.bottom() - 2
+        peel.moveTo(lx, by - 36)
+        peel.lineTo(lx + 36, by)
+        peel.lineTo(lx, by)
+        peel.closeSubpath()
+        pg = QLinearGradient(lx + 34, by - 34, lx, by)
+        pg.setColorAt(0.0, QColor(255, 255, 255, 140))
+        pg.setColorAt(0.5, QColor(accent_color.red(), accent_color.green(), accent_color.blue(), 110))
+        pg.setColorAt(1.0, QColor(255, 255, 255, 30))
+        painter.fillPath(peel, pg)
+
+    # 7. Anillas metálicas cromadas centrales
+    if draw_rings:
+        draw_binder_rings(painter, cx, inner.top() + 14, inner.bottom() - 14, ring_count=3)
+
+    painter.restore()
+
+
+class BinderSpreadFrame(QWidget):
+    """
+    Contenedor físico del pliego abierto (2 páginas + tapa dura + lomo + anillas cromadas).
+    Soporta detección de arrastre desde las esquinas/bordes exteriores para pasar página con el mouse.
+    """
+    drag_turn_started = pyqtSignal(int, float)   # direction (+1/-1), start_x_local
+    drag_turn_moved = pyqtSignal(float)          # current_x_local
+    drag_turn_released = pyqtSignal(float)       # end_x_local
+
+    def __init__(self, design="Charizard Fuego", color="auto", can_go_prev=False, parent=None):
+        super().__init__(parent)
+        self.base_color, self.spine_color, self.accent_color = resolve_binder_palette(design, color)
+        self.can_go_prev = can_go_prev
+        self._hover_corner = None
+        self._dragging_turn = False
+        self._drag_direction = 0
+        self.setMouseTracking(True)
+
+        self.spread_layout = QHBoxLayout(self)
+        self.spread_layout.setSpacing(44)
+        self.spread_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.spread_layout.setContentsMargins(24, 18, 24, 18)
+
+    def set_theme(self, design: str, color: str = "auto"):
+        self.base_color, self.spine_color, self.accent_color = resolve_binder_palette(design, color)
+        self.update()
+
+    def get_board_rect(self) -> QRectF:
+        """Retorna el rectángulo ajustado exactamente alrededor de las 2 páginas."""
+        if self.spread_layout.count() >= 2:
+            w1 = self.spread_layout.itemAt(0).widget()
+            w2 = self.spread_layout.itemAt(1).widget()
+            if w1 and w2 and w1.width() > 0 and w2.width() > 0:
+                g1 = w1.geometry()
+                g2 = w2.geometry()
+                union = g1.united(g2)
+                return QRectF(union.adjusted(-22, -16, 22, 18))
+        return QRectF(self.rect())
+
+    def get_pages_inner_rect(self) -> QRect:
+        """Retorna el QRect exacto que abarca la página izquierda y la página derecha."""
+        if self.spread_layout.count() >= 2:
+            w1 = self.spread_layout.itemAt(0).widget()
+            w2 = self.spread_layout.itemAt(1).widget()
+            if w1 and w2 and w1.width() > 0 and w2.width() > 0:
+                return w1.geometry().united(w2.geometry())
+        return self.rect().adjusted(24, 18, -24, -18)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        _paint_binder_board_background(
+            painter,
+            self.get_board_rect(),
+            self.base_color,
+            self.spine_color,
+            self.accent_color,
+            draw_rings=True,
+            hover_corner=self._hover_corner,
+        )
+
+    def _detect_edge_zone(self, pos: QPoint) -> str | None:
+        board = self.get_board_rect()
+        if not board.contains(QPointF(pos)):
+            return None
+        edge_w = 48.0
+        if pos.x() >= board.right() - edge_w:
+            return "right"
+        if self.can_go_prev and pos.x() <= board.left() + edge_w:
+            return "left"
+        return None
+
+    def mouseMoveEvent(self, event):
+        if self._dragging_turn:
+            self.drag_turn_moved.emit(float(event.position().x()))
+            event.accept()
+            return
+
+        zone = self._detect_edge_zone(event.position().toPoint())
+        if zone != self._hover_corner:
+            self._hover_corner = zone
+            if zone:
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            else:
+                self.unsetCursor()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._dragging_turn and self._hover_corner is not None:
+            self._hover_corner = None
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            zone = self._detect_edge_zone(event.position().toPoint())
+            if zone == "right":
+                self._dragging_turn = True
+                self._drag_direction = 1
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.drag_turn_started.emit(1, float(event.position().x()))
+                event.accept()
+                return
+            elif zone == "left" and self.can_go_prev:
+                self._dragging_turn = True
+                self._drag_direction = -1
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.drag_turn_started.emit(-1, float(event.position().x()))
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._dragging_turn and event.button() == Qt.MouseButton.LeftButton:
+            self._dragging_turn = False
+            self._drag_direction = 0
+            self.unsetCursor()
+            self.drag_turn_released.emit(float(event.position().x()))
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+def _draw_quad_pixmap(
+    painter: QPainter,
+    pixmap: QPixmap,
+    src_rect: QRectF,
+    dst_poly: QPolygonF,
+):
+    """Dibuja una porción rectangular de un QPixmap proyectada en un cuadrilátero 3D usando homografía."""
+    if pixmap.isNull() or src_rect.width() < 0.5 or src_rect.height() < 0.5:
+        return
+    src_poly = QPolygonF([
+        QPointF(src_rect.left(), src_rect.top()),
+        QPointF(src_rect.right(), src_rect.top()),
+        QPointF(src_rect.right(), src_rect.bottom()),
+        QPointF(src_rect.left(), src_rect.bottom()),
+    ])
+    transform = QTransform()
+    if not QTransform.quadToQuad(src_poly, dst_poly, transform):
+        return
+
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter.setTransform(transform, True)
+    painter.drawPixmap(src_rect, pixmap, src_rect)
+    painter.restore()
+
+
+class PageFlipAnimationOverlay(QWidget):
+    """
+    Overlay 3D de cambio de página realista con deformación curva en múltiples franjas,
+    iluminación dinámica, brillo especular sobre micas plásticas, sombras proyectadas
+    y soporte tanto para animación automática como para arrastre manual con el mouse.
+    """
+    flip_completed = pyqtSignal(bool)  # True = completado (cambió página), False = cancelado (volvió)
+
+    NUM_STRIPS = 14
+
+    def __init__(
+        self,
+        parent: QWidget,
+        old_left_pix: QPixmap,
+        old_right_pix: QPixmap,
+        new_left_pix: QPixmap,
+        new_right_pix: QPixmap,
+        board_rect: QRectF,
+        left_page_rect: QRectF,
+        right_page_rect: QRectF,
+        direction: int,
+        design: str = "Charizard Fuego",
+        color: str = "auto",
+    ):
+        super().__init__(parent)
+        self.setGeometry(parent.rect())
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self.old_left_pix = old_left_pix
+        self.old_right_pix = old_right_pix
+        self.new_left_pix = new_left_pix
+        self.new_right_pix = new_right_pix
+        self.board_rect = QRectF(board_rect)
+        self.left_page_rect = QRectF(left_page_rect)
+        self.right_page_rect = QRectF(right_page_rect)
+        self.direction = 1 if direction >= 0 else -1
+        self.base_color, self.spine_color, self.accent_color = resolve_binder_palette(design, color)
+
+        self._progress = 0.0
+        self._anim = None
+        self._sfx = None
+        self._sound_played = False
+
+        self.show()
+        self.raise_()
+
+    def set_progress(self, value: float):
+        self._progress = max(0.0, min(1.0, float(value)))
+        if not self._sound_played and self._progress >= 0.25:
+            self._sound_played = True
+            self._sfx = play_page_turn_sound(self)
+        self.update()
+
+    def progress(self) -> float:
+        return self._progress
+
+    def start_auto_flip(self, duration_ms: int = 520, start_val: float = 0.0, end_val: float = 1.0):
+        """Anima automáticamente el giro desde start_val hasta end_val."""
+        if self._anim and self._anim.state() == QVariantAnimation.State.Running:
+            self._anim.stop()
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(max(140, int(duration_ms)))
+        self._anim.setStartValue(float(start_val))
+        self._anim.setEndValue(float(end_val))
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic if start_val == 0.0 else QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_val)
+        completed_flag = end_val >= 0.5
+        self._anim.finished.connect(lambda: self._finish(completed_flag))
+        self._anim.start()
+
+    def _on_anim_val(self, val):
+        self.set_progress(float(val))
+
+    def _finish(self, completed: bool):
+        self.flip_completed.emit(completed)
+        self.hide()
+        self.deleteLater()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        # 1. Cuerpo físico del binder de fondo (sin anillas aún; las anillas van al final encima)
+        _paint_binder_board_background(
+            painter,
+            self.board_rect,
+            self.base_color,
+            self.spine_color,
+            self.accent_color,
+            draw_rings=False,
+        )
+
+        # 2. Páginas estáticas inferiores
+        if self.direction == 1:
+            # Avanzando: izquierda estática = old_left, derecha revelada debajo = new_right
+            painter.drawPixmap(self.left_page_rect, self.old_left_pix, QRectF(self.old_left_pix.rect()))
+            painter.drawPixmap(self.right_page_rect, self.new_right_pix, QRectF(self.new_right_pix.rect()))
+            front_pix = self.old_right_pix
+            back_pix = self.new_left_pix
+            page_w = self.right_page_rect.width()
+            page_h = self.right_page_rect.height()
+            top_y = self.right_page_rect.top()
+        else:
+            # Retrocediendo: derecha estática = old_right, izquierda revelada debajo = new_left
+            painter.drawPixmap(self.left_page_rect, self.new_left_pix, QRectF(self.new_left_pix.rect()))
+            painter.drawPixmap(self.right_page_rect, self.old_right_pix, QRectF(self.old_right_pix.rect()))
+            front_pix = self.old_left_pix
+            back_pix = self.new_right_pix
+            page_w = self.left_page_rect.width()
+            page_h = self.left_page_rect.height()
+            top_y = self.left_page_rect.top()
+
+        spine_x = (self.left_page_rect.right() + self.right_page_rect.left()) * 0.5
+        cy = top_y + page_h * 0.5
+        t = self._progress
+        theta = t * math.pi
+
+        # 3. Sombra dinámica proyectada por la hoja que se levanta sobre la página inferior
+        shadow_alpha = int(125 * math.sin(theta))
+        if shadow_alpha > 2:
+            if self.direction == 1:
+                if t < 0.5:
+                    # Sombra sobre la página derecha recién descubierta
+                    sh_w = max(18.0, page_w * (1.0 - t * 1.4))
+                    sh_rect = QRectF(spine_x, top_y, sh_w, page_h)
+                    sg = QLinearGradient(sh_rect.left(), 0, sh_rect.right(), 0)
+                    sg.setColorAt(0.0, QColor(0, 0, 0, shadow_alpha))
+                    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+                    painter.fillRect(sh_rect, sg)
+                else:
+                    # Sombra cayendo sobre la página izquierda antigua
+                    sh_w = max(18.0, page_w * ((t - 0.5) * 2.0))
+                    sh_rect = QRectF(spine_x - sh_w, top_y, sh_w, page_h)
+                    sg = QLinearGradient(sh_rect.right(), 0, sh_rect.left(), 0)
+                    sg.setColorAt(0.0, QColor(0, 0, 0, shadow_alpha))
+                    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+                    painter.fillRect(sh_rect, sg)
+            else:
+                if t < 0.5:
+                    sh_w = max(18.0, page_w * (1.0 - t * 1.4))
+                    sh_rect = QRectF(spine_x - sh_w, top_y, sh_w, page_h)
+                    sg = QLinearGradient(sh_rect.right(), 0, sh_rect.left(), 0)
+                    sg.setColorAt(0.0, QColor(0, 0, 0, shadow_alpha))
+                    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+                    painter.fillRect(sh_rect, sg)
+                else:
+                    sh_w = max(18.0, page_w * ((t - 0.5) * 2.0))
+                    sh_rect = QRectF(spine_x, top_y, sh_w, page_h)
+                    sg = QLinearGradient(sh_rect.left(), 0, sh_rect.right(), 0)
+                    sg.setColorAt(0.0, QColor(0, 0, 0, shadow_alpha))
+                    sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+                    painter.fillRect(sh_rect, sg)
+
+        # 4. Malla curva 3D de la hoja giratoria (N franjas verticales con curvatura orgánica)
+        N = self.NUM_STRIPS
+        # Anclaje en el borde interior de la página (justo junto a las anillas)
+        half_gap = (self.right_page_rect.left() - self.left_page_rect.right()) * 0.5
+        anchor_offset = half_gap * math.cos(theta)
+        start_x = spine_x + (anchor_offset if self.direction == 1 else -anchor_offset)
+
+        ds = page_w / N
+        curl_strength = math.sin(theta) * 0.36  # Curvatura flexible de la mica plástica
+
+        pts_x = [0.0] * (N + 1)
+        pts_z = [0.0] * (N + 1)
+        phis = [0.0] * N
+
+        for i in range(N):
+            u_mid = (i + 0.5) / N
+            # La zona cercana al lomo inicia antes y el borde exterior se arquea suavemente
+            phi = theta - curl_strength * (u_mid - 0.32)
+            phi = max(0.0, min(math.pi, phi))
+            phis[i] = phi
+            pts_x[i + 1] = pts_x[i] + ds * math.cos(phi)
+            pts_z[i + 1] = pts_z[i] + ds * math.sin(phi)
+
+        # Proyección en perspectiva 3D
+        cam_dist = max(480.0, page_w * 3.4)
+        sx = [0.0] * (N + 1)
+        top_ys = [0.0] * (N + 1)
+        bot_ys = [0.0] * (N + 1)
+
+        for k in range(N + 1):
+            persp = cam_dist / max(120.0, cam_dist - pts_z[k])
+            if self.direction == 1:
+                sx[k] = start_x + pts_x[k] * persp
+            else:
+                sx[k] = start_x - pts_x[k] * persp
+            hh = (page_h * 0.5) * persp
+            top_ys[k] = cy - hh
+            bot_ys[k] = cy + hh
+
+        # Ordenar dibujado: si la hoja ya cruzó 90°, dibujar de afuera hacia adentro para Z correcto
+        indices = range(N) if t < 0.5 else range(N - 1, -1, -1)
+
+        fw = front_pix.width()
+        fh = front_pix.height()
+        bw = back_pix.width()
+        bh = back_pix.height()
+
+        for i in indices:
+            x0, x1 = sx[i], sx[i + 1]
+            if abs(x1 - x0) < 0.65:
+                # Borde de canto de la hoja vista de perfil
+                painter.setPen(QPen(QColor(220, 220, 230, 180), 1.2))
+                painter.drawLine(QPointF(x0, top_ys[i]), QPointF(x0, bot_ys[i]))
+                continue
+
+            # Determinar si esta franja muestra la cara frontal o trasera
+            showing_front = (x1 > x0) if self.direction == 1 else (x1 < x0)
+
+            if showing_front:
+                if self.direction == 1:
+                    u0 = i / N
+                    u1 = (i + 1) / N
+                    src_rect = QRectF(u0 * fw, 0, (u1 - u0) * fw, fh)
+                    dst_poly = QPolygonF([
+                        QPointF(x0, top_ys[i]),
+                        QPointF(x1, top_ys[i + 1]),
+                        QPointF(x1, bot_ys[i + 1]),
+                        QPointF(x0, bot_ys[i]),
+                    ])
+                else:
+                    # En dirección -1, el strip 0 está pegado al lomo (lado derecho de old_left)
+                    u0 = 1.0 - (i + 1) / N
+                    u1 = 1.0 - i / N
+                    src_rect = QRectF(u0 * fw, 0, (u1 - u0) * fw, fh)
+                    dst_poly = QPolygonF([
+                        QPointF(x1, top_ys[i + 1]),
+                        QPointF(x0, top_ys[i]),
+                        QPointF(x0, bot_ys[i]),
+                        QPointF(x1, bot_ys[i + 1]),
+                    ])
+                _draw_quad_pixmap(painter, front_pix, src_rect, dst_poly)
+            else:
+                if self.direction == 1:
+                    # Reverso (new_left): el borde cercano al lomo (i=0) corresponde al lado derecho de new_left
+                    u0 = 1.0 - (i + 1) / N
+                    u1 = 1.0 - i / N
+                    src_rect = QRectF(u0 * bw, 0, (u1 - u0) * bw, bh)
+                    dst_poly = QPolygonF([
+                        QPointF(x1, top_ys[i + 1]),
+                        QPointF(x0, top_ys[i]),
+                        QPointF(x0, bot_ys[i]),
+                        QPointF(x1, bot_ys[i + 1]),
+                    ])
+                else:
+                    # Reverso (new_right): el borde cercano al lomo (i=0) corresponde al lado izquierdo de new_right
+                    u0 = i / N
+                    u1 = (i + 1) / N
+                    src_rect = QRectF(u0 * bw, 0, (u1 - u0) * bw, bh)
+                    dst_poly = QPolygonF([
+                        QPointF(x0, top_ys[i]),
+                        QPointF(x1, top_ys[i + 1]),
+                        QPointF(x1, bot_ys[i + 1]),
+                        QPointF(x0, bot_ys[i]),
+                    ])
+                _draw_quad_pixmap(painter, back_pix, src_rect, dst_poly)
+
+            # Iluminación dinámica + brillo especular de mica plástica Ultra PRO
+            phi = phis[i]
+            quad = QPolygonF([
+                QPointF(x0, top_ys[i]),
+                QPointF(x1, top_ys[i + 1]),
+                QPointF(x1, bot_ys[i + 1]),
+                QPointF(x0, bot_ys[i]),
+            ])
+            # Sombreado de curvatura
+            shade = abs(math.sin(phi)) * 0.34
+            if shade > 0.02:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, int(shade * 140)))
+                painter.drawPolygon(quad)
+
+            # Reflejo especular deslizándose por el plástico protector cuando pasa cerca de 55°-125°
+            glare = max(0.0, 1.0 - abs(phi - 1.15) / 0.55)
+            if glare > 0.05:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(255, 255, 255, int(glare * 62)))
+                painter.drawPolygon(quad)
+
+        # 5. Anillas cromadas centrales encima de todo para que la página gire alrededor de ellas
+        inner_board = self.board_rect.adjusted(18, 13, -18, -17)
+        draw_binder_rings(painter, spine_x, inner_board.top() + 14, inner_board.bottom() - 14, ring_count=3)
+
+
+class BinderOpenAnimationOverlay(QWidget):
+    """
+    Animación 3D cinematográfica de apertura de Binder (como abrir un libro/carpeta física real):
+      Fase 1: La portada cerrada vuela desde la estantería hacia el centro.
+      Fase 2: La tapa gira 180° en perspectiva 3D sobre el lomo revelando el pliego abierto
+              con sus cartas, anillas cromadas y forro interior.
+    """
+    animation_finished = pyqtSignal()
+
+    def __init__(
+        self,
+        parent: QWidget,
+        cover_pixmap: QPixmap,
+        spread_pixmap: QPixmap,
+        board_rect: QRectF,
+        origin_rect: QRectF | None = None,
+        design: str = "Charizard Fuego",
+        color: str = "auto",
+    ):
+        super().__init__(parent)
+        self.setGeometry(parent.rect())
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+
+        self.cover_pixmap = cover_pixmap
+        self.spread_pixmap = spread_pixmap
+        self.board_rect = QRectF(board_rect)
+        self.origin_rect = QRectF(origin_rect) if origin_rect else None
+        self.base_color, self.spine_color, self.accent_color = resolve_binder_palette(design, color)
+
+        self._progress = 0.0
+        self._sfx = None
+        self._sound_played = False
+
+        # Pre-construir textura del forro interior de la tapa
+        self._inner_lining_pix = self._build_inner_lining_pixmap(
+            max(120, int(self.board_rect.width() * 0.5)),
+            max(160, int(self.board_rect.height())),
+        )
+
+        self.show()
+        self.raise_()
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(780)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QEasingCurve.Type.Linear)
+        self._anim.valueChanged.connect(self._on_tick)
+        self._anim.finished.connect(self._on_done)
+        self._anim.start()
+
+    def _build_inner_lining_pixmap(self, w: int, h: int) -> QPixmap:
+        pix = QPixmap(w, h)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = QRectF(2, 2, w - 4, h - 4)
+        grad = QLinearGradient(0, 0, w, h)
+        grad.setColorAt(0.0, self.base_color.darker(155))
+        grad.setColorAt(0.5, QColor("#1c1b22"))
+        grad.setColorAt(1.0, self.spine_color.darker(140))
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, 12, 12)
+        p.fillPath(path, grad)
+        p.setPen(QPen(self.base_color.lighter(115), 2.0))
+        p.drawPath(path)
+
+        # Bolsillo interior diagonal de tapa Ultra PRO
+        pocket = QPainterPath()
+        pocket.moveTo(rect.left() + 14, rect.bottom() - 14)
+        pocket.lineTo(rect.right() - 14, rect.bottom() - 14)
+        pocket.lineTo(rect.right() - 14, rect.top() + h * 0.55)
+        pocket.lineTo(rect.left() + 14, rect.top() + h * 0.72)
+        pocket.closeSubpath()
+        p.fillPath(pocket, QColor(255, 255, 255, 14))
+        p.setPen(QPen(QColor(255, 255, 255, 36), 1.2))
+        p.drawPath(pocket)
+
+        # Costura interior
+        stitch = QPen(QColor(255, 255, 255, 38), 1.0, Qt.PenStyle.DashLine)
+        stitch.setDashPattern([4, 3])
+        p.setPen(stitch)
+        p.drawRoundedRect(rect.adjusted(7, 7, -7, -7), 9, 9)
+
+        p.end()
+        return pix
+
+    def _on_tick(self, val):
+        self._progress = float(val)
+        if not self._sound_played and self._progress >= 0.34:
+            self._sound_played = True
+            self._sfx = play_page_turn_sound(self)
+        self.update()
+
+    def _on_done(self):
+        self.animation_finished.emit()
+        self.hide()
+        self.deleteLater()
+
+    @staticmethod
+    def _ease_out_cubic(x: float) -> float:
+        return 1.0 - (1.0 - x) ** 3
+
+    @staticmethod
+    def _ease_in_out_cubic(x: float) -> float:
+        if x < 0.5:
+            return 4.0 * x * x * x
+        return 1.0 - ((-2.0 * x + 2.0) ** 3) / 2.0
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        p = self._progress
+        half_w = self.board_rect.width() * 0.5
+        full_h = self.board_rect.height()
+        target_cx = self.board_rect.center().x()
+        target_top = self.board_rect.top()
+
+        # Fondo sutil de enfoque cinematográfico que aparece y luego se desvanece
+        if p < 0.25:
+            bg_alpha = int(85 * (p / 0.25))
+        elif p < 0.80:
+            bg_alpha = 85
+        else:
+            bg_alpha = int(85 * max(0.0, (1.0 - p) / 0.20))
+        if bg_alpha > 0:
+            painter.fillRect(self.rect(), QColor(18, 12, 16, bg_alpha))
+
+        # Posición de la portada cerrada centrada en pantalla antes de abrirse
+        closed_rect = QRectF(
+            target_cx - half_w * 0.5,
+            target_top,
+            half_w,
+            full_h,
+        )
+
+        # --- FASE 1 (0.0 -> 0.28): Vuelo y acercamiento de la carpeta cerrada ---
+        if p < 0.28:
+            t1 = self._ease_out_cubic(p / 0.28)
+            if self.origin_rect and self.origin_rect.width() > 20:
+                start_r = self.origin_rect
+            else:
+                start_r = QRectF(
+                    target_cx - half_w * 0.35,
+                    target_top + full_h * 0.15,
+                    half_w * 0.70,
+                    full_h * 0.70,
+                )
+
+            cur_r = QRectF(
+                start_r.x() + (closed_rect.x() - start_r.x()) * t1,
+                start_r.y() + (closed_rect.y() - start_r.y()) * t1,
+                start_r.width() + (closed_rect.width() - start_r.width()) * t1,
+                start_r.height() + (closed_rect.height() - start_r.height()) * t1,
+            )
+
+            # Sombra bajo la portada flotante
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(0, 0, 0, int(90 * t1 + 30)))
+            painter.drawRoundedRect(cur_r.translated(0, 8), 14, 14)
+
+            painter.drawPixmap(cur_r, self.cover_pixmap, QRectF(self.cover_pixmap.rect()))
+            return
+
+        # --- FASE 2 (0.28 -> 1.0): Apertura 3D de la tapa sobre el lomo ---
+        t2 = self._ease_in_out_cubic((p - 0.28) / 0.72)
+        angle_rad = t2 * math.pi  # 0 -> pi (180°)
+
+        # El lomo se desliza suavemente desde closed_rect.left() hasta target_cx
+        spine_x = closed_rect.left() + (target_cx - closed_rect.left()) * t2
+
+        # 1. Mitad derecha del pliego abierto (visible debajo mientras se levanta la tapa)
+        right_dst = QRectF(spine_x, target_top, half_w, full_h)
+        sp_w = self.spread_pixmap.width()
+        sp_h = self.spread_pixmap.height()
+        right_src = QRectF(sp_w * 0.5, 0, sp_w * 0.5, sp_h)
+        left_src = QRectF(0, 0, sp_w * 0.5, sp_h)
+
+        # Sombra bajo la mitad derecha
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 70))
+        painter.drawRoundedRect(right_dst.translated(2, 6), 12, 12)
+
+        painter.drawPixmap(right_dst, self.spread_pixmap, right_src)
+
+        # Sombra interior que la tapa proyecta sobre la página derecha al irse abriendo
+        if t2 < 0.75:
+            cover_shadow_alpha = int(165 * (1.0 - t2 / 0.75))
+            sg = QLinearGradient(right_dst.left(), 0, right_dst.right(), 0)
+            sg.setColorAt(0.0, QColor(0, 0, 0, cover_shadow_alpha))
+            sg.setColorAt(0.7, QColor(0, 0, 0, int(cover_shadow_alpha * 0.45)))
+            sg.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.fillRect(right_dst, sg)
+
+        # 2. Cuando la tapa ya superó ~72% de apertura, revelar suavemente la página izquierda final
+        if t2 > 0.72:
+            left_dst = QRectF(spine_x - half_w, target_top, half_w, full_h)
+            reveal_alpha = min(1.0, (t2 - 0.72) / 0.28)
+            painter.save()
+            painter.setOpacity(reveal_alpha)
+            painter.drawPixmap(left_dst, self.spread_pixmap, left_src)
+            painter.restore()
+
+        # 3. Tapa giratoria en perspectiva 3D (de 0° a 180°)
+        cos_a = math.cos(angle_rad)
+        sin_a = math.sin(angle_rad)
+        outer_x = spine_x + half_w * cos_a
+        persp_lift = sin_a * full_h * 0.085
+
+        if abs(outer_x - spine_x) >= 1.2:
+            if angle_rad < math.pi * 0.5:
+                # Cara exterior (portada del binder)
+                dst_poly = QPolygonF([
+                    QPointF(spine_x, target_top),
+                    QPointF(outer_x, target_top - persp_lift),
+                    QPointF(outer_x, target_top + full_h + persp_lift),
+                    QPointF(spine_x, target_top + full_h),
+                ])
+                _draw_quad_pixmap(painter, self.cover_pixmap, QRectF(self.cover_pixmap.rect()), dst_poly)
+
+                # Reflejo de luz deslizándose por la portada al abrirse
+                glare_alpha = int(75 * sin_a)
+                if glare_alpha > 4:
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(255, 255, 255, glare_alpha))
+                    painter.drawPolygon(dst_poly)
+            else:
+                # Cara interior de la tapa (forro oscuro) que se funde hacia la página izquierda
+                lining_opacity = max(0.0, 1.0 - max(0.0, (t2 - 0.72) / 0.26))
+                if lining_opacity > 0.02:
+                    dst_poly = QPolygonF([
+                        QPointF(outer_x, target_top - persp_lift),
+                        QPointF(spine_x, target_top),
+                        QPointF(spine_x, target_top + full_h),
+                        QPointF(outer_x, target_top + full_h + persp_lift),
+                    ])
+                    painter.save()
+                    painter.setOpacity(lining_opacity)
+                    _draw_quad_pixmap(
+                        painter,
+                        self._inner_lining_pix,
+                        QRectF(self._inner_lining_pix.rect()),
+                        dst_poly,
+                    )
+                    # Sombra de inclinación
+                    shade_alpha = int(90 * sin_a)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(QColor(0, 0, 0, shade_alpha))
+                    painter.drawPolygon(dst_poly)
+                    painter.restore()
