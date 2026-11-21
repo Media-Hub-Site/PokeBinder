@@ -41,11 +41,11 @@ class GaleriaCartasInventario(QWidget):
         self.image_loader.image_ready.connect(self._on_async_image_ready)
 
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(10, 10, 10, 10)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(10, 8, 10, 8)
+        self.main_layout.setSpacing(6)
 
         header_vbox = QVBoxLayout()
-        header_vbox.setSpacing(8)
+        header_vbox.setSpacing(6)
 
         row1 = QHBoxLayout()
         row1.setSpacing(10)
@@ -116,20 +116,21 @@ class GaleriaCartasInventario(QWidget):
         # Barra dedicada y vistosa de Carpetas de Colección (Issue #12 y #15, sin emojis)
         self.carpetas_bar = QFrame()
         self.carpetas_bar.setObjectName("CarpetasBar")
+        self.carpetas_bar.setFixedHeight(42)
         self.carpetas_bar.setStyleSheet("""
             QFrame#CarpetasBar {
                 background-color: #ffeef2;
-                border: 2px solid #f3c8d1;
-                border-radius: 12px;
+                border: 1.5px solid #f3c8d1;
+                border-radius: 10px;
             }
         """)
         carpetas_bar_layout = QHBoxLayout(self.carpetas_bar)
-        carpetas_bar_layout.setContentsMargins(12, 7, 12, 7)
+        carpetas_bar_layout.setContentsMargins(10, 3, 10, 3)
         carpetas_bar_layout.setSpacing(8)
 
         self.lbl_carpetas_titulo = QLabel(t("Carpetas"))
         self.lbl_carpetas_titulo.setStyleSheet(
-            "font-size: 13px; font-weight: 700; color: #5a2a3a; border: none; background: transparent;"
+            "font-size: 12px; font-weight: 700; color: #5a2a3a; border: none; background: transparent;"
         )
         carpetas_bar_layout.addWidget(self.lbl_carpetas_titulo)
 
@@ -138,29 +139,29 @@ class GaleriaCartasInventario(QWidget):
         self.carpetas_scroll.setWidgetResizable(True)
         self.carpetas_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.carpetas_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.carpetas_scroll.setFixedHeight(36)
+        self.carpetas_scroll.setFixedHeight(30)
         self.carpetas_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
         self.carpetas_pills_widget = QWidget()
         self.carpetas_pills_widget.setStyleSheet("background: transparent;")
         self.carpetas_pills_layout = QHBoxLayout(self.carpetas_pills_widget)
-        self.carpetas_pills_layout.setContentsMargins(0, 2, 0, 2)
+        self.carpetas_pills_layout.setContentsMargins(0, 0, 0, 0)
         self.carpetas_pills_layout.setSpacing(6)
         self.carpetas_scroll.setWidget(self.carpetas_pills_widget)
         carpetas_bar_layout.addWidget(self.carpetas_scroll, stretch=1)
 
         self.btn_nueva_cat = QPushButton(f"+ {t('Nueva Carpeta')}")
         self.btn_nueva_cat.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_nueva_cat.setFixedHeight(32)
+        self.btn_nueva_cat.setFixedHeight(28)
         self.btn_nueva_cat.setStyleSheet("""
             QPushButton {
                 background-color: #f7a8b8;
                 color: #ffffff;
                 font-weight: 700;
-                font-size: 13px;
-                border: 2px solid #f29ca4;
-                border-radius: 10px;
-                padding: 4px 16px;
+                font-size: 12px;
+                border: 1.5px solid #f29ca4;
+                border-radius: 9px;
+                padding: 2px 14px;
             }
             QPushButton:hover {
                 background-color: #f56b7b;
@@ -177,8 +178,6 @@ class GaleriaCartasInventario(QWidget):
         self.main_layout.addLayout(header_vbox)
 
         self.scroll = QScrollArea()
-
-
         self.scroll.setWidgetResizable(True)
         self.scroll.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -189,7 +188,7 @@ class GaleriaCartasInventario(QWidget):
         self.container.setObjectName("InventarioContainer")
         self.grid = QGridLayout(self.container)
         self.scroll.setWidget(self.container)
-        self.main_layout.addWidget(self.scroll)
+        self.main_layout.addWidget(self.scroll, stretch=1)
 
         paginacion_layout = QHBoxLayout()
         self.btn_anterior = QPushButton(t("Anterior"))
@@ -247,7 +246,7 @@ class GaleriaCartasInventario(QWidget):
         def _make_pill(label_text, cat_value):
             btn = QPushButton(label_text)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFixedHeight(28)
+            btn.setFixedHeight(24)
             is_active = (self.carpeta_activa == cat_value)
             if is_active:
                 btn.setStyleSheet("""
@@ -255,10 +254,10 @@ class GaleriaCartasInventario(QWidget):
                         background-color: #f56b7b;
                         color: #ffffff;
                         font-weight: 700;
-                        font-size: 12px;
+                        font-size: 11px;
                         border: 1.5px solid #e05263;
-                        border-radius: 12px;
-                        padding: 2px 14px;
+                        border-radius: 10px;
+                        padding: 1px 12px;
                     }
                 """)
             else:
@@ -267,10 +266,10 @@ class GaleriaCartasInventario(QWidget):
                         background-color: #ffffff;
                         color: #5a2a3a;
                         font-weight: 600;
-                        font-size: 12px;
+                        font-size: 11px;
                         border: 1.5px solid #f2b8c3;
-                        border-radius: 12px;
-                        padding: 2px 14px;
+                        border-radius: 10px;
+                        padding: 1px 12px;
                     }
                     QPushButton:hover {
                         background-color: #ffdfe6;
