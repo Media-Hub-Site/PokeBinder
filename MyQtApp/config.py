@@ -1,7 +1,9 @@
 import sys
 import os
+import json
+import shutil
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.5.0"
 
 # Rutas absolutas del proyecto
 if getattr(sys, 'frozen', False):
@@ -21,9 +23,25 @@ SOUNDS_DIR = os.path.join(ASSETS_DIR, "sounds")
 STYLE_FILE = os.path.join(ASSETS_DIR, "style.qss")
 STYLE_DARK_FILE = os.path.join(ASSETS_DIR, "style_dark.qss")
 
-import json
+# Directorio persistente local de datos del usuario (sobrevive a actualizaciones del launcher)
+def get_user_data_dir() -> str:
+    override = os.environ.get("POKEBINDER_DATA_DIR")
+    if override:
+        os.makedirs(override, exist_ok=True)
+        return override
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or os.path.expanduser("~")
+        path = os.path.join(base, "PokeBinder")
+    else:
+        path = os.path.join(os.path.expanduser("~"), ".pokebinder")
+    os.makedirs(path, exist_ok=True)
+    return path
 
-# Carpeta de imágenes descargadas y Base de datos (en la ruta del ejecutable)
+USER_DATA_DIR = get_user_data_dir()
+BACKUPS_DIR = os.path.join(USER_DATA_DIR, "backups")
+os.makedirs(BACKUPS_DIR, exist_ok=True)
+
+# Carpeta de imágenes descargadas (en la ruta del ejecutable para aprovechar assets-v1 del launcher)
 IMAGES_DIR = os.path.join(EXE_DIR, "assets", "images")
 IMAGES_HD_DIR = os.path.join(EXE_DIR, "assets", "images_hd")
 IMAGES_WEBP_DIR = os.path.join(EXE_DIR, "assets", "images_webp")
@@ -63,11 +81,83 @@ VARIANT_COLOR_MAP = {
 }
 
 
-DB_PATH = os.path.join(EXE_DIR, "PokeDatabase.db")
+# Base de datos y persistencia de usuario en AppData/Local/PokeBinder
+SEED_DB_PATH = os.path.join(BUNDLE_DIR, "PokeDatabase.db")
+DB_PATH = os.path.join(USER_DATA_DIR, "PokeDatabase.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-# Configuración y Persistencia
-SETTINGS_FILE = os.path.join(EXE_DIR, "assets", "settings.json")
+# Configuración y Persistencia de Carpetas/Binders
+SETTINGS_FILE = os.path.join(USER_DATA_DIR, "settings.json")
+BINDER_DATA_FILE = os.path.join(USER_DATA_DIR, "binder_data.json")
+
+
+def ensure_user_data_initialized():
+    """
+    Inicializa los archivos persistentes del usuario en USER_DATA_DIR (%LOCALAPPDATA%\\PokeBinder)
+    si aún no existen, migrando datos previos de la carpeta instalada/bundle cuando corresponda.
+    Así el usuario jamás pierde sus sesiones, colecciones ni binders al actualizar la aplicación.
+    """
+    os.makedirs(USER_DATA_DIR, exist_ok=True)
+
+    # 1. Base de datos SQLite
+    if not os.path.exists(DB_PATH):
+        legacy_candidates = [
+            os.path.join(EXE_DIR, "PokeDatabase.db"),
+            os.path.join(EXE_DIR, "_internal", "PokeDatabase.db"),
+            SEED_DB_PATH,
+        ]
+        for cand in legacy_candidates:
+            if cand and os.path.exists(cand) and os.path.abspath(cand) != os.path.abspath(DB_PATH):
+                try:
+                    shutil.copy2(cand, DB_PATH)
+                    print(f"[Storage] Base de datos inicializada en {DB_PATH} desde {cand}")
+                    break
+                except Exception as e:
+                    print(f"[Storage] Error copiando DB desde {cand}: {e}")
+
+    # 2. Datos de Binders (binder_data.json)
+    if not os.path.exists(BINDER_DATA_FILE):
+        migrated = False
+        legacy_binder_candidates = [
+            os.path.join(EXE_DIR, "assets", "binder_data.json"),
+            os.path.join(EXE_DIR, "_internal", "assets", "binder_data.json"),
+            os.path.join(ASSETS_DIR, "binder_data.json"),
+        ]
+        for cand in legacy_binder_candidates:
+            if cand and os.path.exists(cand) and os.path.abspath(cand) != os.path.abspath(BINDER_DATA_FILE):
+                try:
+                    with open(cand, "r", encoding="utf-8") as f:
+                        content = json.load(f)
+                    if isinstance(content, dict) and len(content) > 0:
+                        shutil.copy2(cand, BINDER_DATA_FILE)
+                        print(f"[Storage] binder_data.json migrado desde {cand}")
+                        migrated = True
+                        break
+                except Exception:
+                    pass
+        if not migrated:
+            try:
+                with open(BINDER_DATA_FILE, "w", encoding="utf-8") as f:
+                    json.dump({}, f, indent=4)
+            except Exception as e:
+                print(f"[Storage] Error inicializando binder_data.json: {e}")
+
+    # 3. Configuración (settings.json)
+    if not os.path.exists(SETTINGS_FILE):
+        legacy_settings_candidates = [
+            os.path.join(EXE_DIR, "assets", "settings.json"),
+            os.path.join(ASSETS_DIR, "settings.json"),
+        ]
+        for cand in legacy_settings_candidates:
+            if cand and os.path.exists(cand) and os.path.abspath(cand) != os.path.abspath(SETTINGS_FILE):
+                try:
+                    shutil.copy2(cand, SETTINGS_FILE)
+                    break
+                except Exception:
+                    pass
+
+
+ensure_user_data_initialized()
 
 DEFAULT_SETTINGS = {
     "volumen_musica": 20,

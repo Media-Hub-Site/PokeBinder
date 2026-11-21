@@ -57,7 +57,7 @@ class VariantLegendSidebarWidget(QWidget):
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(5)
 
-        header = QLabel("🎨 " + t("Leyenda Variantes"), self)
+        header = QLabel(t("Leyenda Variantes"), self)
         header.setStyleSheet("font-weight: bold; font-size: 11px; color: #38bdf8;")
         layout.addWidget(header)
 
@@ -121,7 +121,7 @@ class MainWindow(QWidget):
             self.btn_mi_coleccion,
             self.btn_mazos,
             self.btn_print,
-            BotonConSonido(f"⚙️ {t('Ajustes')}"),
+            BotonConSonido(t("Ajustes")),
         ]
 
         for btn in botones_principales:
@@ -134,13 +134,14 @@ class MainWindow(QWidget):
 
         nav_layout.addSpacing(16)
 
-        self.btn_agregar = BotonConSonido(t("Agregar"))
+        self.btn_agregar = BotonConSonido(t("Agregar a Colección"))
+        self.btn_agregar_carpeta = BotonConSonido(t("Agregar a Carpeta"))
         self.btn_eliminar = BotonConSonido(t("Eliminar"))
         self.btn_vaciar = BotonConSonido(t("Vaciar"))
 
         botones_secundarios_layout = QVBoxLayout()
         botones_secundarios_layout.setSpacing(8)
-        for btn in [self.btn_agregar, self.btn_eliminar, self.btn_vaciar]:
+        for btn in [self.btn_agregar, self.btn_agregar_carpeta, self.btn_eliminar, self.btn_vaciar]:
             btn.setFixedHeight(38)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setProperty("class", "ActionSecondary")
@@ -232,6 +233,7 @@ class MainWindow(QWidget):
         self.btn_ajustes.clicked.connect(lambda: self.animar_transicion(5))
         self.btn_salir.clicked.connect(self.confirmar_salir)
         self.btn_agregar.clicked.connect(self.agregar_cartas)
+        self.btn_agregar_carpeta.clicked.connect(self.agregar_cartas_a_carpeta)
         self.btn_eliminar.clicked.connect(self.eliminar_cartas)
         self.btn_vaciar.clicked.connect(self.vaciar_binder)
 
@@ -269,7 +271,9 @@ class MainWindow(QWidget):
         self.btn_mi_coleccion.setText(t("Colección"))
         self.btn_mazos.setText(t("Mazos"))
         self.btn_print.setText(t("Print"))
-        self.btn_ajustes.setText(f"⚙️ {t('Ajustes')}")
+        self.btn_ajustes.setText(t("Ajustes"))
+        self.btn_agregar.setText(t("Agregar a Colección"))
+        self.btn_agregar_carpeta.setText(t("Agregar a Carpeta"))
         self.btn_vaciar.setText(t("Vaciar"))
         self.btn_salir.setText(t("Salir del programa"))
 
@@ -355,6 +359,7 @@ class MainWindow(QWidget):
     def actualizar_botones_secundarios(self, indice):
         try:
             self.btn_agregar.setVisible(indice == 0)
+            self.btn_agregar_carpeta.setVisible(indice == 0)
             self.btn_eliminar.setVisible(indice == 2)
             self.btn_vaciar.setVisible(indice == 1)
             if hasattr(self, 'variant_legend_sidebar') and self.variant_legend_sidebar:
@@ -388,95 +393,14 @@ class MainWindow(QWidget):
                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                              cerrar=True)
 
-    def agregar_cartas(self):
-        galeria_busqueda = self.paginas.widget(0)
-        cartas_seleccionadas = galeria_busqueda.get_cartas_seleccionadas()
-
-        if not cartas_seleccionadas:
-            self.mostrar_mensaje(t("Selecciona al menos una carta para agregar."))
-            return
-
-        from MyQtApp.app.db_services import obtener_categorias_usuario
-        categorias_existentes = obtener_categorias_usuario(self.usuario)
-        categoria_elegida = None
-
-        if categorias_existentes:
-            dlg = QDialog(self)
-            dlg.setWindowTitle(t("Agregar a una Categoría?"))
-            dlg.setFixedSize(360, 180)
-            dlg.setStyleSheet("""
-                QDialog {
-                    background-color: #fff5f7;
-                }
-                QLabel {
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: #5a2a3a;
-                }
-                QComboBox {
-                    border: 1.5px solid #f29ca4;
-                    border-radius: 8px;
-                    padding: 6px;
-                    background-color: white;
-                    font-size: 12px;
-                }
-            """)
-
-            dlg_layout = QVBoxLayout(dlg)
-            dlg_layout.setContentsMargins(20, 20, 20, 20)
-            dlg_layout.setSpacing(14)
-
-            lbl = QLabel(f"<b>{t('Agregar a una Categoría?')}</b>")
-            dlg_layout.addWidget(lbl)
-
-            combo_cat = QComboBox()
-            combo_cat.addItem(t("Colección (Sin categoría específica)"), None)
-            for cat in categorias_existentes:
-                combo_cat.addItem(f"🏷️  {cat}", cat)
-            dlg_layout.addWidget(combo_cat)
-
-            btn_row = QHBoxLayout()
-            btn_row.setSpacing(10)
-
-            btn_no = QPushButton(t("No gracias"))
-            btn_no.setProperty("class", "pill")
-            btn_no.setFixedHeight(34)
-            btn_no.setCursor(Qt.CursorShape.PointingHandCursor)
-
-            btn_add = QPushButton(t("Agregar"))
-            btn_add.setProperty("class", "pill")
-            btn_add.setFixedHeight(34)
-            btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
-
-            def on_no():
-                dlg.done(2)
-
-            def on_add():
-                dlg.done(1)
-
-            btn_no.clicked.connect(on_no)
-            btn_add.clicked.connect(on_add)
-
-            btn_row.addWidget(btn_no)
-            btn_row.addWidget(btn_add)
-            dlg_layout.addLayout(btn_row)
-
-            res = dlg.exec()
-            if res == 0:
-                # El usuario cerró el diálogo con la X
-                return
-            elif res == 1:
-                categoria_elegida = combo_cat.currentData()
-            elif res == 2:
-                categoria_elegida = None
-
-        exitos = agregar_cartas_usuario(self.usuario, cartas_seleccionadas, categoria=categoria_elegida)
+    def _ejecutar_agregar_cartas(self, galeria_busqueda, cartas_seleccionadas, carpeta_elegida=None):
+        exitos = agregar_cartas_usuario(self.usuario, cartas_seleccionadas, categoria=carpeta_elegida)
 
         if exitos:
             if hasattr(galeria_busqueda, 'limpiar_seleccion'):
                 galeria_busqueda.limpiar_seleccion()
-            msg_cat = f" en la categoría '{categoria_elegida}'" if categoria_elegida else ""
-            self.mostrar_mensaje(f"✔️ Se han agregado {exitos} carta(s) a tu colección{msg_cat}.")
+            msg_cat = f" en la carpeta '{carpeta_elegida}'" if carpeta_elegida else ""
+            self.mostrar_mensaje(f"Se han agregado {exitos} carta(s) a tu colección{msg_cat}.")
             try:
                 inventario = self.paginas.widget(2)
                 if hasattr(inventario, 'cargar_categorias_combo'):
@@ -491,7 +415,156 @@ class MainWindow(QWidget):
             except Exception as e:
                 print(f"Error al refrescar inventario tras agregar: {e}")
         else:
-            self.mostrar_mensaje("❗Las cartas seleccionadas ya están en tu colección o hubo un error.")
+            if carpeta_elegida:
+                # Si la carta ya estaba en la colección pero se agregó a una carpeta, refrescar igual
+                try:
+                    inventario = self.paginas.widget(2)
+                    if hasattr(inventario, 'cargar_categorias_combo'):
+                        inventario.cargar_categorias_combo()
+                    if hasattr(inventario, 'reset_page_and_actualizar'):
+                        inventario.reset_page_and_actualizar()
+                except Exception:
+                    pass
+                self.mostrar_mensaje(f"Las cartas seleccionadas ya estaban en tu colección y fueron asignadas a '{carpeta_elegida}'.")
+            else:
+                self.mostrar_mensaje("Las cartas seleccionadas ya están en tu colección o hubo un error.")
+
+    def agregar_cartas(self):
+        """Agrega directamente a la colección general sin asignar carpeta."""
+        galeria_busqueda = self.paginas.widget(0)
+        cartas_seleccionadas = galeria_busqueda.get_cartas_seleccionadas()
+
+        if not cartas_seleccionadas:
+            self.mostrar_mensaje(t("Selecciona al menos una carta para agregar."))
+            return
+
+        self._ejecutar_agregar_cartas(galeria_busqueda, cartas_seleccionadas, carpeta_elegida=None)
+
+    def agregar_cartas_a_carpeta(self):
+        """Pregunta al usuario a qué carpeta de su colección desea agregar las cartas seleccionadas."""
+        galeria_busqueda = self.paginas.widget(0)
+        cartas_seleccionadas = galeria_busqueda.get_cartas_seleccionadas()
+
+        if not cartas_seleccionadas:
+            self.mostrar_mensaje(t("Selecciona al menos una carta para agregar."))
+            return
+
+        from PyQt6.QtWidgets import QLineEdit
+        from MyQtApp.app.db_services import obtener_categorias_usuario, crear_categoria_usuario
+
+        carpetas_existentes = obtener_categorias_usuario(self.usuario)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("Agregar a Carpeta"))
+        dlg.setFixedSize(390, 250 if carpetas_existentes else 200)
+        dlg.setStyleSheet("""
+            QDialog {
+                background-color: #fff5f7;
+            }
+            QLabel {
+                font-size: 13px;
+                font-weight: 600;
+                color: #5a2a3a;
+            }
+            QComboBox, QLineEdit {
+                border: 2px solid #f7a8b8;
+                border-radius: 10px;
+                padding: 6px 10px;
+                background-color: #ffffff;
+                color: #5a2a3a;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border-color: #f56b7b;
+            }
+        """)
+
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(22, 20, 22, 20)
+        dlg_layout.setSpacing(12)
+
+        lbl = QLabel(t("¿A qué carpeta deseas agregar estas cartas?"))
+        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #5a2a3a;")
+        dlg_layout.addWidget(lbl)
+
+        combo_cat = None
+        if carpetas_existentes:
+            combo_cat = QComboBox()
+            for cat in carpetas_existentes:
+                combo_cat.addItem(cat, cat)
+            dlg_layout.addWidget(combo_cat)
+
+            lbl_or = QLabel(t("O crea una carpeta nueva:"))
+            lbl_or.setStyleSheet("font-size: 12px; font-weight: 600; color: #8c5464;")
+            dlg_layout.addWidget(lbl_or)
+        else:
+            lbl_empty = QLabel(t("Aún no tienes carpetas. Escribe un nombre para crear la primera:"))
+            lbl_empty.setWordWrap(True)
+            lbl_empty.setStyleSheet("font-size: 12px; font-weight: 500; color: #8c5464;")
+            dlg_layout.addWidget(lbl_empty)
+
+        txt_nueva_carpeta = QLineEdit()
+        txt_nueva_carpeta.setPlaceholderText(t("Ej: Favoritas, Intercambios, Charizards..."))
+        dlg_layout.addWidget(txt_nueva_carpeta)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        btn_cancel = QPushButton(t("Cancelar"))
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #703043;
+                border: 2px solid #f2c4ce;
+                border-radius: 10px;
+                padding: 4px 16px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #ffeef2; }
+        """)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        btn_add = QPushButton(t("Agregar a Carpeta"))
+        btn_add.setFixedHeight(36)
+        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_add.setStyleSheet("""
+            QPushButton {
+                background-color: #f7a8b8;
+                color: #ffffff;
+                border: 2px solid #f29ca4;
+                border-radius: 10px;
+                padding: 4px 18px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #f56b7b;
+                border-color: #f5475c;
+            }
+        """)
+
+        chosen = [None]
+
+        def on_confirm():
+            nueva = txt_nueva_carpeta.text().strip()
+            if nueva:
+                crear_categoria_usuario(self.usuario, nueva)
+                chosen[0] = nueva
+                dlg.accept()
+            elif combo_cat and combo_cat.currentData():
+                chosen[0] = combo_cat.currentData()
+                dlg.accept()
+            else:
+                QMessageBox.warning(dlg, t("Aviso"), t("Ingresa un nombre para la carpeta."))
+
+        btn_add.clicked.connect(on_confirm)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_add)
+        dlg_layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted and chosen[0]:
+            self._ejecutar_agregar_cartas(galeria_busqueda, cartas_seleccionadas, carpeta_elegida=chosen[0])
 
     def mostrar_mensaje(self, texto, botones=QMessageBox.StandardButton.Ok, cerrar=False):
         mensaje = QMessageBox(self)
@@ -541,9 +614,9 @@ class MainWindow(QWidget):
         if eliminados:
             if hasattr(inventario, 'limpiar_seleccion'):
                 inventario.limpiar_seleccion()
-            self.mostrar_mensaje(f"✔️ Se han eliminado {eliminados} carta(s) de tu inventario.")
+            self.mostrar_mensaje(f"Se han eliminado {eliminados} carta(s) de tu inventario.")
         else:
-            self.mostrar_mensaje("❗No se eliminaron cartas (posiblemente ya no existían en la tabla o hubo error).")
+            self.mostrar_mensaje("No se eliminaron cartas (posiblemente ya no existían en la tabla o hubo error).")
 
         try:
             if hasattr(inventario, 'reset_page_and_actualizar'):
@@ -563,7 +636,7 @@ class MainWindow(QWidget):
             try:
                 binder = self.paginas.widget(1)
                 binder.clear_binder()
-                self.mostrar_mensaje("✔️ Carpeta vaciada correctamente.")
+                self.mostrar_mensaje("Carpeta vaciada correctamente.")
             except Exception as e:
                 print(f"Error vaciando binder: {e}")
                 self.mostrar_mensaje("Error al vaciar la carpeta.")

@@ -1,15 +1,12 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-import os
 
-# Obtener la ruta absoluta al directorio del proyecto
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(PROJECT_ROOT, "PokeDatabase.db")
+from MyQtApp.config import DB_PATH, DATABASE_URL, ensure_user_data_initialized
 
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+ensure_user_data_initialized()
 print(f"Usando base de datos en: {DB_PATH}")
 
-engine = create_engine(DATABASE_URL, echo=False)  # echo=False para producción/versión 1.0
+engine = create_engine(DATABASE_URL, echo=False)
 
 SessionLocal = sessionmaker(bind=engine)
 

@@ -2,9 +2,7 @@ import os
 import shutil
 import sqlite3
 from datetime import datetime
-from MyQtApp.config import DB_PATH, EXE_DIR
-
-BACKUPS_DIR = os.path.join(EXE_DIR, "backups")
+from MyQtApp.config import DB_PATH, BACKUPS_DIR
 
 
 def get_backups_dir() -> str:

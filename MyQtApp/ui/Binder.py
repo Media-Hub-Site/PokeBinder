@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QMimeData, QPoint, QSize, QEasingCurve, QPropertyAn
 from PyQt6.QtGui import QDrag, QPixmap, QCursor, QAction
 from sqlalchemy import func
 
-from MyQtApp.config import ASSETS_DIR, IMAGES_DIR
+from MyQtApp.config import ASSETS_DIR, IMAGES_DIR, BINDER_DATA_FILE
 from ..session import SessionLocal
 from ..models import Cartas, UsuarioCarta
 from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap, get_card_placeholder_pixmap
@@ -21,13 +21,11 @@ from ..app.price_updater import (
 )
 from MyQtApp.i18n import t, language_manager
 from MyQtApp.ui.CardWidget import CardZoomOverlay, VariantBadgeButton, LanguageBadgeLabel
+from MyQtApp.ui.BinderCoverWidget import BinderCoverWidget, BINDER_DESIGNS, resolve_design_key
 from MyQtApp.ui.toast import show_toast
 
 
-
-
 # --- CONSTANTS & CONFIGURATION ---
-BINDER_DATA_FILE = os.path.join(ASSETS_DIR, "binder_data.json")
 
 BINDER_MODES = {
     "2x2": {
@@ -398,7 +396,7 @@ class InventorySidebar(QWidget):
         layout.addWidget(self.buscador)
 
         # 2. Botón Filtros (usa clase BinderNavBtn del QSS global)
-        self.btn_toggle_filtros = QPushButton("⚙️ Filtros ▼")
+        self.btn_toggle_filtros = QPushButton("Filtros")
         self.btn_toggle_filtros.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle_filtros.setProperty("class", "BinderNavBtn")
         self.btn_toggle_filtros.clicked.connect(self.toggle_filters_panel)
@@ -455,7 +453,7 @@ class InventorySidebar(QWidget):
             panel_layout.addWidget(combo)
 
         # Botón Aplicar (usa clase pill del QSS global)
-        self.btn_aplicar_filtros = QPushButton("✅ Aplicar Filtros")
+        self.btn_aplicar_filtros = QPushButton("Aplicar Filtros")
         self.btn_aplicar_filtros.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_aplicar_filtros.setProperty("class", "pill")
         self.btn_aplicar_filtros.clicked.connect(self.load_cards)
@@ -483,16 +481,16 @@ class InventorySidebar(QWidget):
         self.header.setText(t("Colección"))
         self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
         if hasattr(self, 'btn_aplicar_filtros'):
-            self.btn_aplicar_filtros.setText(f"✅ {t('Aplicar')}")
+            self.btn_aplicar_filtros.setText(t('Aplicar'))
 
 
     def toggle_filters_panel(self):
         visible = not self.filters_panel.isVisible()
         self.filters_panel.setVisible(visible)
         if visible:
-            self.btn_toggle_filtros.setText("⚙️ Filtros ▲")
+            self.btn_toggle_filtros.setText("Ocultar Filtros")
         else:
-            self.btn_toggle_filtros.setText("⚙️ Filtros ▼")
+            self.btn_toggle_filtros.setText("Filtros")
 
     def cargar_opciones_filtros(self):
         session = SessionLocal()
@@ -749,47 +747,63 @@ class BinderView(QWidget):
         language_manager.language_changed.connect(self.retranslate_ui)
 
     def setup_folders_view(self):
-        """Configura la vista inicial de carpetas del usuario con tarjetas interactivas."""
+        """Configura la vista inicial de binders del usuario (limpia y sin emojis)."""
         layout = QVBoxLayout(self.folders_view_widget)
-        layout.setContentsMargins(30, 25, 30, 25)
-        layout.setSpacing(20)
+        layout.setContentsMargins(28, 22, 28, 22)
+        layout.setSpacing(16)
 
-        # Header de Vista Carpetas
-        top_bar = QHBoxLayout()
-        top_bar.setSpacing(15)
+        # Header de Vista Binders (se oculta automáticamente cuando no hay carpetas)
+        self.folders_header_widget = QWidget()
+        self.folders_header_widget.setStyleSheet("background: transparent; border: none;")
+        top_bar = QHBoxLayout(self.folders_header_widget)
+        top_bar.setContentsMargins(0, 0, 0, 0)
+        top_bar.setSpacing(14)
 
-        self.lbl_folders_title = QLabel(f"📁 {t('Mis Carpetas / Binders')}")
-        self.lbl_folders_title.setStyleSheet("font-size: 22px; font-weight: bold; color: #5a2a3a;")
+        self.lbl_folders_title = QLabel(t("Mis Binders"))
+        self.lbl_folders_title.setStyleSheet("font-size: 21px; font-weight: 700; color: #5a2a3a;")
         top_bar.addWidget(self.lbl_folders_title)
 
         top_bar.addStretch()
 
-        self.btn_crear_carpeta_main = QPushButton(f"✨ + {t('Nueva Carpeta')}")
-        self.btn_crear_carpeta_main.setFixedHeight(36)
+        self.btn_crear_carpeta_main = QPushButton(f"+ {t('Nueva Carpeta')}")
+        self.btn_crear_carpeta_main.setFixedHeight(38)
         self.btn_crear_carpeta_main.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_crear_carpeta_main.setProperty("class", "pill")
+        self.btn_crear_carpeta_main.setStyleSheet("""
+            QPushButton {
+                background-color: #f7a8b8;
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: 700;
+                border: 2px solid #f29ca4;
+                border-radius: 12px;
+                padding: 4px 20px;
+            }
+            QPushButton:hover {
+                background-color: #f56b7b;
+                border-color: #f5475c;
+            }
+            QPushButton:pressed {
+                background-color: #d44854;
+            }
+        """)
         self.btn_crear_carpeta_main.clicked.connect(self.abrir_dialogo_crear_carpeta)
         top_bar.addWidget(self.btn_crear_carpeta_main)
 
-        layout.addLayout(top_bar)
+        layout.addWidget(self.folders_header_widget)
 
-        # Subtítulo explicativo
-        self.lbl_folders_subtitle = QLabel(t("Selecciona una carpeta para abrir tu álbum o crea una nueva personalizada."))
-        self.lbl_folders_subtitle.setStyleSheet("font-size: 13px; color: #884d5d;")
-        layout.addWidget(self.lbl_folders_subtitle)
-
-        # Scroll Area para el catálogo de carpetas
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: transparent; border: none;")
+        # Scroll Area para el catálogo de binders o el botón único de creación inicial
+        self.folders_scroll = QScrollArea()
+        self.folders_scroll.setWidgetResizable(True)
+        self.folders_scroll.setStyleSheet("background-color: transparent; border: none;")
 
         self.folders_container = QWidget()
+        self.folders_container.setStyleSheet("background: transparent;")
         self.folders_grid = QGridLayout(self.folders_container)
-        self.folders_grid.setSpacing(20)
+        self.folders_grid.setSpacing(22)
         self.folders_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        scroll.setWidget(self.folders_container)
+        self.folders_scroll.setWidget(self.folders_container)
 
-        layout.addWidget(scroll, 1)
+        layout.addWidget(self.folders_scroll, 1)
 
     def setup_binder_pages_view(self):
         """Configura la vista interna del binder seleccionado."""
@@ -798,10 +812,10 @@ class BinderView(QWidget):
         
         # Header layout for Title, Folder Selector and Back Button
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(12)
+        header_layout.setSpacing(10)
 
         # Botón Volver a mis carpetas
-        self.btn_back_to_folders = QPushButton(f"◀ {t('Volver a Carpetas')}")
+        self.btn_back_to_folders = QPushButton(t("Volver a Carpetas"))
         self.btn_back_to_folders.setFixedHeight(32)
         self.btn_back_to_folders.setProperty("class", "pill")
         self.btn_back_to_folders.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -809,13 +823,8 @@ class BinderView(QWidget):
         header_layout.addWidget(self.btn_back_to_folders)
 
         self.title_lbl = QLabel(t("Binder"))
-        self.title_lbl.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
+        self.title_lbl.setStyleSheet("font-size: 17px; font-weight: bold; color: #5a2a3a;")
         header_layout.addWidget(self.title_lbl)
-
-        # Selector rápido de Carpetas / Binders
-        self.lbl_folder_icon = QLabel("📁")
-        self.lbl_folder_icon.setStyleSheet("font-size: 16px; margin-left: 6px;")
-        header_layout.addWidget(self.lbl_folder_icon)
 
         self.combo_folders = QComboBox()
         self.combo_folders.setFixedHeight(30)
@@ -833,16 +842,15 @@ class BinderView(QWidget):
         self.combo_folders.currentIndexChanged.connect(self.on_folder_selected)
         header_layout.addWidget(self.combo_folders)
 
-        self.btn_new_folder = QPushButton(f"✨ +{t('Carpeta')}")
+        self.btn_new_folder = QPushButton(f"+ {t('Carpeta')}")
         self.btn_new_folder.setFixedHeight(30)
         self.btn_new_folder.setProperty("class", "pill")
         self.btn_new_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_new_folder.clicked.connect(self.abrir_dialogo_crear_carpeta)
         header_layout.addWidget(self.btn_new_folder)
 
-        self.btn_manage_folders = QPushButton("⚙️")
+        self.btn_manage_folders = QPushButton(t("Gestionar"))
         self.btn_manage_folders.setFixedHeight(30)
-        self.btn_manage_folders.setFixedWidth(34)
         self.btn_manage_folders.setProperty("class", "pill")
         self.btn_manage_folders.setToolTip(t("Administrar o eliminar carpetas"))
         self.btn_manage_folders.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -914,7 +922,7 @@ class BinderView(QWidget):
         self.btn_next = QPushButton(t("Siguiente"))
         self.lbl_pages = QLabel(f"{t('Página')} 1 - 2")
 
-        self.btn_quitar = QPushButton("🗑️ Quitar")
+        self.btn_quitar = QPushButton(t("Quitar"))
         self.btn_quitar.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_quitar.setStyleSheet("""
             QPushButton {
@@ -1148,8 +1156,7 @@ class BinderView(QWidget):
         show_toast(f"Error al cotizar carpeta: {err_msg}", "error")
 
     def render_folders_grid(self):
-        """Dibuja las tarjetas de carpetas con sus diseños, colores, tamaños y cantidad de cartas."""
-        # Limpiar elementos anteriores
+        """Dibuja los binders con diseños físicos realistas o un único botón grande si no hay carpetas."""
         for i in reversed(range(self.folders_grid.count())):
             item = self.folders_grid.itemAt(i)
             if item and item.widget():
@@ -1157,45 +1164,40 @@ class BinderView(QWidget):
 
         folders = self.get_user_folders()
         if not folders:
-            # Mensaje de que no tiene carpetas creadas
-            empty_box = QFrame()
-            empty_box.setStyleSheet("""
-                QFrame {
-                    background-color: #ffffff;
-                    border: 2px dashed #f29ca4;
-                    border-radius: 16px;
-                    padding: 40px;
+            # Estado vacío ultra limpio (Issue #12): un único botón grande preguntando si desea crear una carpeta, sin emojis
+            self.folders_header_widget.setVisible(False)
+            self.folders_grid.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            btn_first_folder = QPushButton(f"¿Quieres crear una carpeta?\n\n+ {t('Crear mi primera carpeta')}")
+            btn_first_folder.setFixedSize(360, 175)
+            btn_first_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_first_folder.setStyleSheet("""
+                QPushButton {
+                    background-color: #fff0f4;
+                    color: #5a2a3a;
+                    font-size: 16px;
+                    font-weight: 700;
+                    border: 2.5px dashed #f29ca4;
+                    border-radius: 20px;
+                    padding: 20px;
+                }
+                QPushButton:hover {
+                    background-color: #f7a8b8;
+                    color: #ffffff;
+                    border: 2.5px solid #f56b7b;
+                }
+                QPushButton:pressed {
+                    background-color: #f56b7b;
+                    color: #ffffff;
+                    border-color: #d44854;
                 }
             """)
-            empty_layout = QVBoxLayout(empty_box)
-            empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_layout.setSpacing(16)
-
-            lbl_empty_icon = QLabel("📂")
-            lbl_empty_icon.setStyleSheet("font-size: 50px;")
-            lbl_empty_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_layout.addWidget(lbl_empty_icon)
-
-            lbl_msg = QLabel(t("Aún no tienes ninguna carpeta creada."))
-            lbl_msg.setStyleSheet("font-size: 18px; font-weight: bold; color: #5a2a3a;")
-            lbl_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_layout.addWidget(lbl_msg)
-
-            lbl_submsg = QLabel(t("Crea tu primer binder personalizado para organizar tus cartas favoritas."))
-            lbl_submsg.setStyleSheet("font-size: 13px; color: #703043;")
-            lbl_submsg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_layout.addWidget(lbl_submsg)
-
-            btn_first_folder = QPushButton(f"✨ {t('Crear mi primera carpeta')}")
-            btn_first_folder.setProperty("class", "pill")
-            btn_first_folder.setFixedHeight(40)
-            btn_first_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_first_folder.setStyleSheet("font-size: 14px; font-weight: bold; padding: 0 24px;")
             btn_first_folder.clicked.connect(self.abrir_dialogo_crear_carpeta)
-            empty_layout.addWidget(btn_first_folder, 0, Qt.AlignmentFlag.AlignCenter)
-
-            self.folders_grid.addWidget(empty_box, 0, 0, 1, 3)
+            self.folders_grid.addWidget(btn_first_folder, 0, 0, Qt.AlignmentFlag.AlignCenter)
             return
+
+        self.folders_header_widget.setVisible(True)
+        self.folders_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
 
         cols = 3
         row = 0
@@ -1209,87 +1211,40 @@ class BinderView(QWidget):
                 row += 1
 
     def _crear_tarjeta_carpeta(self, f_id, f_data):
-        """Crea el widget visual de una carpeta con portada estilizada, badges y acciones."""
+        """Crea la tarjeta visual de un Binder con portada física realista Ultra PRO (sin emojis)."""
         name = f_data.get("name", "Carpeta")
-        color = f_data.get("color", "#ffeef2")
-        design = f_data.get("design", "Clásico")
+        color = f_data.get("color", "auto")
+        design = resolve_design_key(f_data.get("design", "Charizard Fuego"))
         mode = f_data.get("mode", "3x3")
-        
+
         cards_dict = f_data.get("cards", {}).get(mode, {})
         cant_cartas = len(cards_dict)
 
         frame = QFrame()
-        frame.setFixedSize(230, 275)
+        frame.setFixedSize(218, 305)
         frame.setCursor(Qt.CursorShape.PointingHandCursor)
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {color};
-                border: 2px solid #e5a4b1;
-                border-radius: 14px;
-            }}
-            QFrame:hover {{
-                border: 2.5px solid #d45d79;
-            }}
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1.5px solid #f2c4ce;
+                border-radius: 16px;
+            }
+            QFrame:hover {
+                border: 2px solid #f56b7b;
+                background-color: #fff9fa;
+            }
         """)
 
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
 
-        # Barra superior de la tarjeta (Diseño y botón eliminar rápido)
-        top_h = QHBoxLayout()
-        lbl_design = QLabel(f"🎨 {design}")
-        lbl_design.setStyleSheet("font-size: 11px; font-weight: 600; color: #5a2a3a; background: rgba(255,255,255,0.6); padding: 2px 6px; border-radius: 6px;")
-        top_h.addWidget(lbl_design)
-        top_h.addStretch()
+        # Portada física realista del Binder (Issue #13)
+        cover = BinderCoverWidget(name=name, design=design, color=color, mode=mode, parent=frame)
+        cover.setFixedSize(196, 212)
+        layout.addWidget(cover, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        btn_del = QPushButton("🗑️")
-        btn_del.setFixedSize(24, 24)
-        btn_del.setToolTip(t("Eliminar esta carpeta"))
-        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_del.setStyleSheet("""
-            QPushButton {
-                background: rgba(255,255,255,0.7);
-                border: none;
-                border-radius: 12px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background: #fee2e2;
-            }
-        """)
-        btn_del.clicked.connect(lambda ch, target_id=f_id, target_name=name: self._eliminar_carpeta_directa(target_id, target_name))
-        top_h.addWidget(btn_del)
-        layout.addLayout(top_h)
-
-        # Ícono central del binder
-        icon_lbl = QLabel("📖")
-        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_lbl.setStyleSheet("font-size: 48px; background: transparent; border: none; margin-top: 6px;")
-        layout.addWidget(icon_lbl)
-
-        # Nombre de la carpeta
-        lbl_name = QLabel(name)
-        lbl_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_name.setStyleSheet("font-size: 15px; font-weight: bold; color: #3a1a25; background: transparent; border: none;")
-        layout.addWidget(lbl_name)
-
-        # Metadatos (Modo y total de cartas)
-        meta_layout = QHBoxLayout()
-        meta_layout.setSpacing(6)
-        meta_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        badge_mode = QLabel(f"📐 {mode}")
-        badge_mode.setStyleSheet("background: white; border: 1px solid #d45d79; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #703043;")
-        meta_layout.addWidget(badge_mode)
-
-        badge_cards = QLabel(f"🃏 {cant_cartas} cartas")
-        badge_cards.setStyleSheet("background: white; border: 1px solid #e5a4b1; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: bold; color: #5a2a3a;")
-        meta_layout.addWidget(badge_cards)
-
-        layout.addLayout(meta_layout)
-
-        # Resumen de precio acumulativo de la carpeta por API
+        # Resumen de precio acumulativo por API
         price_res = self.calcular_precios_carpeta(f_data)
         src_map = price_res["sources"]
         if src_map:
@@ -1303,28 +1258,64 @@ class BinderView(QWidget):
                         parts.append(f"{src}: ${info['usd']:,.2f}")
             price_summary_txt = " | ".join(parts[:2])
         else:
-            price_summary_txt = f"Valor: ${price_res['base_total_usd']:,.2f} USD"
+            price_summary_txt = f"${price_res['base_total_usd']:,.2f} USD"
 
         lbl_folder_val = QLabel(price_summary_txt)
         lbl_folder_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_folder_val.setWordWrap(True)
         lbl_folder_val.setStyleSheet(
-            "background: rgba(255,255,255,0.88); border: 1px solid #86efac; "
-            "border-radius: 6px; padding: 3px 6px; font-size: 10px; font-weight: bold; color: #15803d;"
+            "background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 7px; "
+            "padding: 3px 6px; font-size: 10px; font-weight: 700; color: #15803d;"
         )
         layout.addWidget(lbl_folder_val)
 
-        # Botón Abrir Carpeta
-        btn_open = QPushButton(f"📂 {t('Abrir Carpeta')}")
-        btn_open.setProperty("class", "pill")
-        btn_open.setFixedHeight(28)
-        btn_open.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_open.clicked.connect(lambda ch, target_id=f_id: self.abrir_carpeta(target_id))
-        layout.addWidget(btn_open)
+        # Fila inferior: cantidad de cartas + acción discreta de eliminar
+        bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(2, 0, 2, 0)
+        bottom_row.setSpacing(6)
 
-        # Al hacer click en cualquier parte del frame, abrir la carpeta
+        lbl_count = QLabel(f"{cant_cartas} cartas  |  {mode}")
+        lbl_count.setStyleSheet("font-size: 11px; font-weight: 600; color: #703043; border: none; background: transparent;")
+        bottom_row.addWidget(lbl_count)
+        bottom_row.addStretch()
+
+        btn_del = QPushButton(t("Eliminar"))
+        btn_del.setFixedHeight(22)
+        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #b91c1c;
+                border: 1px solid #fecaca;
+                border-radius: 6px;
+                padding: 0 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #fee2e2;
+                border-color: #ef4444;
+            }
+        """)
+        btn_del.clicked.connect(lambda ch, target_id=f_id, target_name=name: self._eliminar_carpeta_directa(target_id, target_name))
+        bottom_row.addWidget(btn_del)
+
+        layout.addLayout(bottom_row)
+
+        # Hover sincronizado con la portada física 3D
+        def on_enter(event):
+            cover.set_hovered(True)
+            QFrame.enterEvent(frame, event)
+
+        def on_leave(event):
+            cover.set_hovered(False)
+            QFrame.leaveEvent(frame, event)
+
         def on_frame_click(event):
-            self.abrir_carpeta(f_id)
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.abrir_carpeta(f_id)
+
+        frame.enterEvent = on_enter
+        frame.leaveEvent = on_leave
         frame.mousePressEvent = on_frame_click
 
         return frame
@@ -1355,7 +1346,7 @@ class BinderView(QWidget):
         folders = self.get_user_folders()
         for f_id, f_data in folders.items():
             f_name = f_data.get("name", f_id)
-            self.combo_folders.addItem(f"📁 {f_name}", f_id)
+            self.combo_folders.addItem(f_name, f_id)
 
         # Seleccionar la carpeta actual
         if self.current_folder_id:
@@ -1383,12 +1374,11 @@ class BinderView(QWidget):
         """Aplica el color y estilo visual definido para la carpeta actual."""
         folders = self.get_user_folders()
         folder = folders.get(self.current_folder_id, {})
-        color = folder.get("color", "#ffeef2")
-        # Actualizar modo desde la carpeta
         folder_mode = folder.get("mode")
         if folder_mode and folder_mode in BINDER_MODES:
             self.current_mode = folder_mode
-        self.lbl_folder_info_badge.setText(f"📐 {self.current_mode} | 🎨 {folder.get('design', 'Clásico')}")
+        design_name = resolve_design_key(folder.get("design", "Charizard Fuego"))
+        self.lbl_folder_info_badge.setText(f"{self.current_mode}  |  {design_name}")
 
     def on_folder_selected(self, index):
         folder_id = self.combo_folders.currentData()
@@ -1398,8 +1388,8 @@ class BinderView(QWidget):
 
     def abrir_dialogo_crear_carpeta(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle(t("Crear Nueva Carpeta / Binder"))
-        dlg.setFixedSize(380, 360)
+        dlg.setWindowTitle(t("Crear Nuevo Binder"))
+        dlg.setFixedSize(580, 390)
         dlg.setStyleSheet("""
             QDialog {
                 background-color: #fff5f7;
@@ -1410,64 +1400,166 @@ class BinderView(QWidget):
                 font-size: 12px;
             }
             QLineEdit, QComboBox {
-                border: 1.5px solid #f29ca4;
-                border-radius: 8px;
-                padding: 6px;
-                background-color: white;
-                font-size: 12px;
+                border: 2px solid #f7a8b8;
+                border-radius: 10px;
+                padding: 7px 10px;
+                background-color: #ffffff;
+                color: #5a2a3a;
+                font-size: 13px;
+            }
+            QLineEdit:focus, QComboBox:focus {
+                border-color: #f56b7b;
             }
         """)
 
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        outer_layout = QHBoxLayout(dlg)
+        outer_layout.setContentsMargins(22, 20, 22, 20)
+        outer_layout.setSpacing(20)
 
-        layout.addWidget(QLabel(t("Nombre de la carpeta:")))
+        # --- Columna Izquierda: Vista previa física en vivo del Binder (Issue #13) ---
+        preview_panel = QFrame()
+        preview_panel.setFixedWidth(215)
+        preview_panel.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1.5px solid #f2c4ce;
+                border-radius: 14px;
+            }
+        """)
+        preview_layout = QVBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(12, 14, 12, 14)
+        preview_layout.setSpacing(8)
+
+        lbl_prev_title = QLabel(t("Vista Previa"))
+        lbl_prev_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_prev_title.setStyleSheet("font-size: 12px; font-weight: 700; color: #8c5464; border: none; background: transparent;")
+        preview_layout.addWidget(lbl_prev_title)
+
+        default_design = list(BINDER_DESIGNS.keys())[0]
+        live_preview = BinderCoverWidget(name="Mi Binder", design=default_design, color="auto", mode="3x3", parent=preview_panel)
+        live_preview.setFixedSize(190, 248)
+        preview_layout.addWidget(live_preview, alignment=Qt.AlignmentFlag.AlignCenter)
+        preview_layout.addStretch()
+
+        outer_layout.addWidget(preview_panel)
+
+        # --- Columna Derecha: Formulario limpio y sin emojis ---
+        form_layout = QVBoxLayout()
+        form_layout.setSpacing(10)
+
+        lbl_heading = QLabel(t("Configura tu Binder"))
+        lbl_heading.setStyleSheet("font-size: 16px; font-weight: 700; color: #5a2a3a;")
+        form_layout.addWidget(lbl_heading)
+
+        form_layout.addWidget(QLabel(t("Nombre de la carpeta")))
         txt_nombre = QLineEdit()
-        txt_nombre.setPlaceholderText(t("Ej: Vintage Charizards, Set 151..."))
-        layout.addWidget(txt_nombre)
+        txt_nombre.setPlaceholderText(t("Ej: Charizards, Set 151, Intercambios..."))
+        form_layout.addWidget(txt_nombre)
 
-        layout.addWidget(QLabel(t("Tamaño / Distribución de cartas:")))
+        form_layout.addWidget(QLabel(t("Tamaño de bolsillos")))
         combo_tamano = QComboBox()
         combo_tamano.addItems(["3x3", "2x2", "3x4", "4x4"])
-        layout.addWidget(combo_tamano)
+        form_layout.addWidget(combo_tamano)
 
-        layout.addWidget(QLabel(t("Diseño de la carpeta:")))
+        form_layout.addWidget(QLabel(t("Diseño de portada")))
         combo_diseno = QComboBox()
-        combo_diseno.addItems(["Clásico Rosa", "Ultra Pro Negro", "Pokéball Rojo", "Master Ball Púrpura", "Pikachu Amarillo"])
-        layout.addWidget(combo_diseno)
+        combo_diseno.addItems(list(BINDER_DESIGNS.keys()))
+        form_layout.addWidget(combo_diseno)
 
-        layout.addWidget(QLabel(t("Color de portada / fondo:")))
-        btn_color = QPushButton(t("Elegir Color Personalizado"))
+        form_layout.addWidget(QLabel(t("Color de portada")))
+        color_row = QHBoxLayout()
+        color_row.setSpacing(8)
+
+        selected_color = ["auto"]
+
+        btn_color = QPushButton(t("Color personalizado"))
+        btn_color.setFixedHeight(32)
+        btn_color.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_color.setProperty("class", "pill")
-        btn_color.setFixedHeight(30)
-        selected_color = ["#ffeef2"]
+
+        btn_reset_color = QPushButton(t("Color del diseño"))
+        btn_reset_color.setFixedHeight(32)
+        btn_reset_color.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_reset_color.setProperty("class", "pill")
+
+        def refresh_preview():
+            live_preview.set_binder_props(
+                name=txt_nombre.text().strip() or "Mi Binder",
+                design=combo_diseno.currentText(),
+                color=selected_color[0],
+                mode=combo_tamano.currentText(),
+            )
 
         def choose_color():
-            c = QColorDialog.getColor(initial=selected_color[0], parent=dlg, title=t("Color de Carpeta"))
+            c = QColorDialog.getColor(parent=dlg, title=t("Color de portada"))
             if c.isValid():
                 selected_color[0] = c.name()
-                btn_color.setText(f"🎨 {selected_color[0]}")
-                btn_color.setStyleSheet(f"background-color: {selected_color[0]}; color: #333; font-weight: bold;")
+                btn_color.setText(selected_color[0].upper())
+                btn_color.setStyleSheet(
+                    f"background-color: {selected_color[0]}; color: #ffffff; "
+                    f"border: 2px solid #5a2a3a; border-radius: 10px; font-weight: bold;"
+                )
+                refresh_preview()
+
+        def reset_color():
+            selected_color[0] = "auto"
+            btn_color.setText(t("Color personalizado"))
+            btn_color.setStyleSheet("")
+            btn_color.setProperty("class", "pill")
+            refresh_preview()
 
         btn_color.clicked.connect(choose_color)
-        layout.addWidget(btn_color)
+        btn_reset_color.clicked.connect(reset_color)
+        txt_nombre.textChanged.connect(lambda _: refresh_preview())
+        combo_diseno.currentTextChanged.connect(lambda _: refresh_preview())
+        combo_tamano.currentTextChanged.connect(lambda _: refresh_preview())
+
+        color_row.addWidget(btn_color, 1)
+        color_row.addWidget(btn_reset_color)
+        form_layout.addLayout(color_row)
+
+        form_layout.addStretch()
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
         btn_cancel = QPushButton(t("Cancelar"))
-        btn_cancel.setFixedHeight(34)
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #703043;
+                border: 2px solid #f2c4ce;
+                border-radius: 10px;
+                padding: 4px 16px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #ffeef2; }
+        """)
         btn_cancel.clicked.connect(dlg.reject)
 
-        btn_crear = QPushButton(f"✨ {t('Crear Carpeta')}")
-        btn_crear.setProperty("class", "pill")
-        btn_crear.setFixedHeight(34)
+        btn_crear = QPushButton(t("Crear Carpeta"))
+        btn_crear.setFixedHeight(36)
         btn_crear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_crear.setStyleSheet("""
+            QPushButton {
+                background-color: #f7a8b8;
+                color: #ffffff;
+                border: 2px solid #f29ca4;
+                border-radius: 10px;
+                padding: 4px 20px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #f56b7b;
+                border-color: #f5475c;
+            }
+        """)
 
         def on_crear():
             nombre = txt_nombre.text().strip()
             if not nombre:
-                QMessageBox.warning(dlg, t("Error"), t("Debes ingresar un nombre para la carpeta."))
+                QMessageBox.warning(dlg, t("Aviso"), t("Debes ingresar un nombre para la carpeta."))
                 return
             import time
             new_id = f"folder_{int(time.time() * 1000)}"
@@ -1491,14 +1583,14 @@ class BinderView(QWidget):
             self.render_folders_grid()
             show_toast(f"Carpeta '{nombre}' creada con éxito", "info")
             dlg.accept()
-            # Abrir directamente la nueva carpeta creada
             self.abrir_carpeta(new_id)
 
         btn_crear.clicked.connect(on_crear)
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(btn_crear)
-        layout.addLayout(btn_row)
+        form_layout.addLayout(btn_row)
 
+        outer_layout.addLayout(form_layout, 1)
         dlg.exec()
 
     def abrir_dialogo_administrar_carpetas(self):
@@ -1515,8 +1607,8 @@ class BinderView(QWidget):
                 font-size: 12px;
             }
             QComboBox {
-                border: 1.5px solid #f29ca4;
-                border-radius: 8px;
+                border: 2px solid #f7a8b8;
+                border-radius: 10px;
                 padding: 6px;
                 background-color: white;
             }
@@ -1530,17 +1622,17 @@ class BinderView(QWidget):
         combo = QComboBox()
         folders = self.get_user_folders()
         for f_id, f_data in folders.items():
-            combo.addItem(f"📁 {f_data.get('name', f_id)}", f_id)
+            combo.addItem(f_data.get('name', f_id), f_id)
         layout.addWidget(combo)
 
-        btn_del = QPushButton(f"🗑️ {t('Eliminar Carpeta')}")
+        btn_del = QPushButton(t("Eliminar Carpeta"))
         btn_del.setStyleSheet("""
             QPushButton {
                 background-color: #fee2e2;
                 color: #dc2626;
                 border: 1.5px solid #fca5a5;
                 font-weight: bold;
-                border-radius: 8px;
+                border-radius: 10px;
                 padding: 6px;
             }
             QPushButton:hover {
@@ -1559,7 +1651,7 @@ class BinderView(QWidget):
             resp = QMessageBox.question(
                 dlg,
                 t("Confirmar Eliminación"),
-                f"{t('¿Seguro que deseas eliminar la carpeta')} {target_name}? {t('Las cartas que contenía dejarán de estar asignadas a este binder (seguirán en tu colección general).')}",
+                f"{t('¿Seguro que deseas eliminar la carpeta')} '{target_name}'? {t('Las cartas que contenía dejarán de estar asignadas a este binder (seguirán en tu colección general).')}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if resp == QMessageBox.StandardButton.Yes:
@@ -1602,10 +1694,10 @@ class BinderView(QWidget):
         selected_slots = self.get_selected_slots()
         count = len(selected_slots)
         if count > 0:
-            self.btn_quitar.setText(f"🗑️ Quitar ({count})")
+            self.btn_quitar.setText(f"{t('Quitar')} ({count})")
             self.btn_quitar.setEnabled(True)
         else:
-            self.btn_quitar.setText("🗑️ Quitar")
+            self.btn_quitar.setText(t("Quitar"))
             self.btn_quitar.setEnabled(False)
 
     def quitar_cartas_seleccionadas(self):
@@ -1614,9 +1706,7 @@ class BinderView(QWidget):
             return
 
         for slot in selected_slots:
-            # 1. Eliminar la carta del Binder (solo de la carpeta json, NO de la colección en BD)
             self.set_card_at(slot.page_index, slot.slot_index, None)
-            # 2. Desactivar selección y limpiar casilla visualmente
             slot.set_selected(False)
             slot.clear_card()
 
@@ -1627,18 +1717,18 @@ class BinderView(QWidget):
         self.title_lbl.setText(t("Binder"))
         self.btn_prev.setText(t("Anterior"))
         self.btn_next.setText(t("Siguiente"))
-        self.btn_quitar.setText("🗑️ Quitar" if not self.get_selected_slots() else f"🗑️ Quitar ({len(self.get_selected_slots())})")
+        self.btn_quitar.setText(t("Quitar") if not self.get_selected_slots() else f"{t('Quitar')} ({len(self.get_selected_slots())})")
         p_idx_1 = self.current_spread_index * 2
         p_idx_2 = p_idx_1 + 1
         self.lbl_pages.setText(f"{t('Página')} {p_idx_1 + 1} - {p_idx_2 + 1}")
         if hasattr(self.inventory, 'retranslate_ui'):
             self.inventory.retranslate_ui()
         if hasattr(self, 'btn_back_to_folders'):
-            self.btn_back_to_folders.setText(f"◀ {t('Volver a Carpetas')}")
+            self.btn_back_to_folders.setText(t("Volver a Carpetas"))
         if hasattr(self, 'lbl_folders_title'):
-            self.lbl_folders_title.setText(f"📁 {t('Mis Carpetas / Binders')}")
+            self.lbl_folders_title.setText(t("Mis Binders"))
         if hasattr(self, 'btn_crear_carpeta_main'):
-            self.btn_crear_carpeta_main.setText(f"✨ + {t('Nueva Carpeta')}")
+            self.btn_crear_carpeta_main.setText(f"+ {t('Nueva Carpeta')}")
         
     def load_binder_data(self):
         if os.path.exists(BINDER_DATA_FILE):

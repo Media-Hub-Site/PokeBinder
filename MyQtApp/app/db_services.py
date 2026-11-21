@@ -44,8 +44,8 @@ def agregar_cartas_usuario(usuario_nombre, cartas_info, categoria=None):
                 session.add(nueva_carta)
                 exitos += 1
             else:
-                # Si ya existía y se seleccionó una categoría, actualizarla si no tenía o si se especificó
-                if item_cat and not existe.categoria:
+                # Si ya existía y el usuario asignó explícitamente una carpeta, actualizarla
+                if item_cat:
                     existe.categoria = item_cat
                 
         session.commit()

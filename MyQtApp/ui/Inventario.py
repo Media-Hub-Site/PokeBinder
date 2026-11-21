@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QScrollArea, QGridLayout,
     QHBoxLayout, QLineEdit, QComboBox, QPushButton, QGraphicsOpacityEffect,
-    QSizePolicy, QDialog, QInputDialog, QMessageBox
+    QSizePolicy, QDialog, QInputDialog, QMessageBox, QFrame
 )
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl, QEasingCurve
@@ -33,6 +33,7 @@ class GaleriaCartasInventario(QWidget):
         self.card_widgets_por_key = {}
         self._current_card_size = (120, 170)
         self.cartas_seleccionadas = set()
+        self.carpeta_activa = None
         self.current_page = 0
         self.total_cartas = 0
 
@@ -101,30 +102,78 @@ class GaleriaCartasInventario(QWidget):
         self.combo_idioma = QComboBox()
         self.combo_idioma.setProperty("class", "FilterCombo")
         self.combo_idioma.addItem(f"{t('Idioma')}: {t('Todos')}", None)
-        self.combo_idioma.addItem("Español 🇪🇸", "es")
-        self.combo_idioma.addItem("English 🇬🇧", "en")
-        self.combo_idioma.addItem("日本語 🇯🇵", "ja")
-        self.combo_idioma.addItem("Français 🇫🇷", "fr")
-        self.combo_idioma.addItem("Português 🇵🇹", "pt")
-        self.combo_idioma.addItem("繁體中文 🇨🇳", "zh")
+        self.combo_idioma.addItem("Español", "es")
+        self.combo_idioma.addItem("English", "en")
+        self.combo_idioma.addItem("日本語", "ja")
+        self.combo_idioma.addItem("Français", "fr")
+        self.combo_idioma.addItem("Português", "pt")
+        self.combo_idioma.addItem("繁體中文", "zh")
         self.combo_idioma.currentIndexChanged.connect(self.reset_page_and_actualizar)
         row2.addWidget(self.combo_idioma, stretch=1)
 
-        # Filtro de Categoría de Usuario
-        self.combo_categoria = QComboBox()
-        self.combo_categoria.setProperty("class", "FilterCombo")
-        self.combo_categoria.addItem(f"{t('Categoría')}: {t('Todas')}", None)
-        self.combo_categoria.currentIndexChanged.connect(self.reset_page_and_actualizar)
-        row2.addWidget(self.combo_categoria, stretch=1)
-
-        # Botón para Crear / Administrar Categorías
-        self.btn_nueva_cat = QPushButton(f"🏷️ +{t('Categoría')}")
-        self.btn_nueva_cat.setProperty("class", "CleanBtn")
-        self.btn_nueva_cat.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_nueva_cat.clicked.connect(self.abrir_creador_categorias)
-        row2.addWidget(self.btn_nueva_cat)
-
         header_vbox.addLayout(row2)
+
+        # Barra dedicada y vistosa de Carpetas de Colección (Issue #12 y #15, sin emojis)
+        self.carpetas_bar = QFrame()
+        self.carpetas_bar.setObjectName("CarpetasBar")
+        self.carpetas_bar.setStyleSheet("""
+            QFrame#CarpetasBar {
+                background-color: #ffeef2;
+                border: 2px solid #f3c8d1;
+                border-radius: 12px;
+            }
+        """)
+        carpetas_bar_layout = QHBoxLayout(self.carpetas_bar)
+        carpetas_bar_layout.setContentsMargins(12, 7, 12, 7)
+        carpetas_bar_layout.setSpacing(8)
+
+        self.lbl_carpetas_titulo = QLabel(t("Carpetas"))
+        self.lbl_carpetas_titulo.setStyleSheet(
+            "font-size: 13px; font-weight: 700; color: #5a2a3a; border: none; background: transparent;"
+        )
+        carpetas_bar_layout.addWidget(self.lbl_carpetas_titulo)
+
+        # Contenedor horizontal desplazable de pastillas de carpetas
+        self.carpetas_scroll = QScrollArea()
+        self.carpetas_scroll.setWidgetResizable(True)
+        self.carpetas_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.carpetas_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.carpetas_scroll.setFixedHeight(36)
+        self.carpetas_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self.carpetas_pills_widget = QWidget()
+        self.carpetas_pills_widget.setStyleSheet("background: transparent;")
+        self.carpetas_pills_layout = QHBoxLayout(self.carpetas_pills_widget)
+        self.carpetas_pills_layout.setContentsMargins(0, 2, 0, 2)
+        self.carpetas_pills_layout.setSpacing(6)
+        self.carpetas_scroll.setWidget(self.carpetas_pills_widget)
+        carpetas_bar_layout.addWidget(self.carpetas_scroll, stretch=1)
+
+        self.btn_nueva_cat = QPushButton(f"+ {t('Nueva Carpeta')}")
+        self.btn_nueva_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_nueva_cat.setFixedHeight(32)
+        self.btn_nueva_cat.setStyleSheet("""
+            QPushButton {
+                background-color: #f7a8b8;
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 13px;
+                border: 2px solid #f29ca4;
+                border-radius: 10px;
+                padding: 4px 16px;
+            }
+            QPushButton:hover {
+                background-color: #f56b7b;
+                border-color: #f5475c;
+            }
+            QPushButton:pressed {
+                background-color: #d44854;
+            }
+        """)
+        self.btn_nueva_cat.clicked.connect(self.abrir_creador_categorias)
+        carpetas_bar_layout.addWidget(self.btn_nueva_cat)
+
+        header_vbox.addWidget(self.carpetas_bar)
         self.main_layout.addLayout(header_vbox)
 
         self.scroll = QScrollArea()
@@ -184,27 +233,70 @@ class GaleriaCartasInventario(QWidget):
         self.cargar_categorias_combo()
 
     def cargar_categorias_combo(self):
+        """Refresca las pastillas interactivas de carpetas de la colección."""
         from MyQtApp.app.db_services import obtener_categorias_usuario
-        self.combo_categoria.blockSignals(True)
-        current = self.combo_categoria.currentText()
-        self.combo_categoria.clear()
-        self.combo_categoria.addItem(f"{t('Categoría')}: {t('Todas')}", None)
         cats = obtener_categorias_usuario(self.nombre_usuario)
+        if self.carpeta_activa and self.carpeta_activa not in cats:
+            self.carpeta_activa = None
+
+        while self.carpetas_pills_layout.count():
+            item = self.carpetas_pills_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        def _make_pill(label_text, cat_value):
+            btn = QPushButton(label_text)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(28)
+            is_active = (self.carpeta_activa == cat_value)
+            if is_active:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #f56b7b;
+                        color: #ffffff;
+                        font-weight: 700;
+                        font-size: 12px;
+                        border: 1.5px solid #e05263;
+                        border-radius: 12px;
+                        padding: 2px 14px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #ffffff;
+                        color: #5a2a3a;
+                        font-weight: 600;
+                        font-size: 12px;
+                        border: 1.5px solid #f2b8c3;
+                        border-radius: 12px;
+                        padding: 2px 14px;
+                    }
+                    QPushButton:hover {
+                        background-color: #ffdfe6;
+                        border-color: #f56b7b;
+                    }
+                """)
+            btn.clicked.connect(lambda ch, val=cat_value: self._seleccionar_carpeta_pill(val))
+            return btn
+
+        self.carpetas_pills_layout.addWidget(_make_pill(t("Todas"), None))
         for cat in cats:
-            self.combo_categoria.addItem(cat, cat)
-        # Reestablecer selección previa si aún existe
-        idx = self.combo_categoria.findText(current)
-        if idx >= 0:
-            self.combo_categoria.setCurrentIndex(idx)
-        else:
-            self.combo_categoria.setCurrentIndex(0)
-        self.combo_categoria.blockSignals(False)
+            self.carpetas_pills_layout.addWidget(_make_pill(cat, cat))
+        self.carpetas_pills_layout.addStretch()
+
+    def _seleccionar_carpeta_pill(self, cat_value):
+        if self.carpeta_activa == cat_value:
+            return
+        self.carpeta_activa = cat_value
+        self.cargar_categorias_combo()
+        self.reset_page_and_actualizar()
 
     def abrir_creador_categorias(self):
         from MyQtApp.app.db_services import obtener_categorias_usuario, crear_categoria_usuario, eliminar_categoria_usuario
         dlg = QDialog(self)
-        dlg.setWindowTitle(t("Gestionar Categorías"))
-        dlg.setFixedSize(360, 320)
+        dlg.setWindowTitle(t("Carpetas de Colección"))
+        dlg.setFixedSize(400, 340)
         dlg.setStyleSheet("""
             QDialog {
                 background-color: #fff5f7;
@@ -212,52 +304,85 @@ class GaleriaCartasInventario(QWidget):
             QLabel {
                 font-weight: 600;
                 color: #5a2a3a;
+                font-size: 13px;
             }
-            QLineEdit {
-                border: 1.5px solid #f29ca4;
-                border-radius: 8px;
-                padding: 6px;
-                background-color: white;
+            QLineEdit, QComboBox {
+                border: 2px solid #f7a8b8;
+                border-radius: 10px;
+                padding: 7px 10px;
+                background-color: #ffffff;
+                color: #5a2a3a;
+                font-size: 13px;
             }
-            QComboBox {
-                border: 1.5px solid #f29ca4;
-                border-radius: 8px;
-                padding: 4px;
-                background-color: white;
+            QLineEdit:focus, QComboBox:focus {
+                border-color: #f56b7b;
             }
         """)
 
         layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel(t("Crear nueva categoría:")))
+        lbl_head = QLabel(t("Crear nueva carpeta"))
+        lbl_head.setStyleSheet("font-size: 15px; font-weight: 700; color: #5a2a3a;")
+        layout.addWidget(lbl_head)
+
         txt_nueva = QLineEdit()
-        txt_nueva.setPlaceholderText(t("Nombre de categoría (ej: Favoritas, Charizards...)"))
+        txt_nueva.setPlaceholderText(t("Nombre de carpeta (ej: Favoritas, Charizards...)"))
         layout.addWidget(txt_nueva)
 
-        btn_crear = QPushButton(f"✨ {t('Crear Categoría')}")
-        btn_crear.setProperty("class", "pill")
-        btn_crear.setFixedHeight(32)
+        btn_crear = QPushButton(t("Crear Carpeta"))
+        btn_crear.setFixedHeight(36)
         btn_crear.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_crear.setStyleSheet("""
+            QPushButton {
+                background-color: #f7a8b8;
+                color: #ffffff;
+                font-weight: 700;
+                font-size: 13px;
+                border: 2px solid #f29ca4;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #f56b7b;
+                border-color: #f5475c;
+            }
+        """)
         layout.addWidget(btn_crear)
 
-        layout.addSpacing(10)
-        layout.addWidget(QLabel(t("Categorías existentes:")))
+        layout.addSpacing(8)
+        layout.addWidget(QLabel(t("Carpetas existentes")))
         combo_existentes = QComboBox()
         layout.addWidget(combo_existentes)
 
-        btn_eliminar_cat = QPushButton(f"🗑️ {t('Eliminar Categoría Seleccionada')}")
-        btn_eliminar_cat.setProperty("class", "pill")
-        btn_eliminar_cat.setFixedHeight(30)
+        btn_eliminar_cat = QPushButton(t("Eliminar Carpeta Seleccionada"))
+        btn_eliminar_cat.setFixedHeight(34)
         btn_eliminar_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_eliminar_cat.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #dc2626;
+                border: 1.5px solid #fca5a5;
+                font-weight: 600;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: #fee2e2;
+                border-color: #ef4444;
+            }
+            QPushButton:disabled {
+                color: #94a3b8;
+                border-color: #e2e8f0;
+                background-color: #f8fafc;
+            }
+        """)
         layout.addWidget(btn_eliminar_cat)
 
         def refrescar_dialog_combo():
             combo_existentes.clear()
             cats = obtener_categorias_usuario(self.nombre_usuario)
             if not cats:
-                combo_existentes.addItem(t("No tienes categorías creadas"))
+                combo_existentes.addItem(t("No tienes carpetas creadas"))
                 btn_eliminar_cat.setEnabled(False)
             else:
                 btn_eliminar_cat.setEnabled(True)
@@ -269,24 +394,24 @@ class GaleriaCartasInventario(QWidget):
         def on_crear():
             nombre = txt_nueva.text().strip()
             if not nombre:
-                QMessageBox.warning(dlg, t("Error"), t("Ingresa un nombre para la categoría."))
+                QMessageBox.warning(dlg, t("Aviso"), t("Ingresa un nombre para la carpeta."))
                 return
             if crear_categoria_usuario(self.nombre_usuario, nombre):
                 txt_nueva.clear()
                 refrescar_dialog_combo()
                 self.cargar_categorias_combo()
-                show_toast(f"Categoría '{nombre}' creada", "info")
+                show_toast(f"Carpeta '{nombre}' creada", "info")
             else:
-                QMessageBox.warning(dlg, t("Error"), t("Ya existe una categoría con ese nombre."))
+                QMessageBox.warning(dlg, t("Aviso"), t("Ya existe una carpeta con ese nombre."))
 
         def on_eliminar():
             nombre = combo_existentes.currentText()
-            if not nombre or nombre == t("No tienes categorías creadas"):
+            if not nombre or nombre == t("No tienes carpetas creadas"):
                 return
             resp = QMessageBox.question(
                 dlg,
-                t("Eliminar Categoría"),
-                f"{t('¿Deseas eliminar la categoría')} '{nombre}'? {t('Las cartas seguirán en tu colección pero ya no pertenecerán a esta categoría.')}",
+                t("Eliminar Carpeta"),
+                f"{t('¿Deseas eliminar la carpeta')} '{nombre}'? {t('Las cartas seguirán en tu colección general.')}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if resp == QMessageBox.StandardButton.Yes:
@@ -294,15 +419,24 @@ class GaleriaCartasInventario(QWidget):
                 refrescar_dialog_combo()
                 self.cargar_categorias_combo()
                 self.reset_page_and_actualizar()
-                show_toast(f"Categoría '{nombre}' eliminada", "info")
+                show_toast(f"Carpeta '{nombre}' eliminada", "info")
 
         btn_crear.clicked.connect(on_crear)
         btn_eliminar_cat.clicked.connect(on_eliminar)
 
         btn_cerrar = QPushButton(t("Cerrar"))
-        btn_cerrar.setProperty("class", "pill")
-        btn_cerrar.setFixedHeight(32)
+        btn_cerrar.setFixedHeight(34)
         btn_cerrar.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cerrar.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff;
+                color: #703043;
+                border: 2px solid #f2c4ce;
+                border-radius: 10px;
+                font-weight: 600;
+            }
+            QPushButton:hover { background-color: #ffeef2; }
+        """)
         btn_cerrar.clicked.connect(dlg.accept)
         layout.addStretch()
         layout.addWidget(btn_cerrar)
@@ -324,10 +458,8 @@ class GaleriaCartasInventario(QWidget):
             self.combo_idioma.setCurrentIndex(0)
             self.combo_idioma.blockSignals(False)
 
-        if hasattr(self, 'combo_categoria'):
-            self.combo_categoria.blockSignals(True)
-            self.combo_categoria.setCurrentIndex(0)
-            self.combo_categoria.blockSignals(False)
+        self.carpeta_activa = None
+        self.cargar_categorias_combo()
 
         self.reset_page_and_actualizar()
 
@@ -354,10 +486,8 @@ class GaleriaCartasInventario(QWidget):
         if selected_lang:
             q = q.filter(Cartas.idioma == selected_lang)
 
-        if hasattr(self, 'combo_categoria'):
-            selected_cat = self.combo_categoria.currentData()
-            if selected_cat:
-                q = q.filter(UsuarioCarta.categoria == selected_cat)
+        if self.carpeta_activa:
+            q = q.filter(UsuarioCarta.categoria == self.carpeta_activa)
 
         texto = self.buscador.text().lower().strip()
         if texto:
@@ -410,10 +540,8 @@ class GaleriaCartasInventario(QWidget):
         if selected_lang:
             q = q.filter(Cartas.idioma == selected_lang)
 
-        if hasattr(self, 'combo_categoria'):
-            selected_cat = self.combo_categoria.currentData()
-            if selected_cat:
-                q = q.filter(UsuarioCarta.categoria == selected_cat)
+        if self.carpeta_activa:
+            q = q.filter(UsuarioCarta.categoria == self.carpeta_activa)
 
         if texto:
             q = q.filter(func.lower(Cartas.nombre).like(f"%{texto}%"))
