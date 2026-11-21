@@ -8,7 +8,10 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPropertyAnimation, QUrl, QEasi
 from PyQt6.QtMultimedia import QSoundEffect
 import os
 
-from MyQtApp.app.getImgs import get_pixmap_from_zip, get_webp_pixmap
+from MyQtApp.app.getImgs import (
+    get_pixmap_from_zip, get_webp_pixmap, get_card_placeholder_pixmap,
+    has_exact_lang_image, CardImageLoaderManager
+)
 from MyQtApp.ui.CardWidget import ClickableLabel, CardItemWidget, VariantLegendBar
 from ..session import SessionLocal
 from ..models import Cartas  # tu modelo SQLAlchemy
@@ -26,9 +29,14 @@ class GaleriaCartas(QWidget):
         self.session = SessionLocal()
 
         self.labels_por_id = {}
+        self.card_widgets_por_key = {}
+        self._current_card_size = (120, 170)
         self.cartas_seleccionadas = set()
         self.current_page = 0
         self.total_cartas = 0
+
+        self.image_loader = CardImageLoaderManager(max_threads=6, parent=self)
+        self.image_loader.image_ready.connect(self._on_async_image_ready)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 8)
@@ -146,6 +154,7 @@ class GaleriaCartas(QWidget):
         self.cargar_filtros()
         self.actualizar_total_cartas()
         self.actualizar_galeria()
+        language_manager.language_changed.connect(self.retranslate_ui)
 
     def cargar_filtros(self):
         for columna, combo in self.filtros.items():
@@ -202,6 +211,7 @@ class GaleriaCartas(QWidget):
                 item.widget().deleteLater()
 
         self.labels_por_id.clear()
+        self.card_widgets_por_key.clear()
 
         # Obtener dimensiones de carta desde ajustes
         from MyQtApp.config import load_settings
@@ -213,6 +223,7 @@ class GaleriaCartas(QWidget):
             size = (150, 212)
         else: # Normal
             size = (120, 170)
+        self._current_card_size = size
 
         query = self._build_language_query()
 
@@ -230,28 +241,30 @@ class GaleriaCartas(QWidget):
         row, col = 0, 0
         for carta in cartas:
             card_lang = carta.idioma or language_manager.current_language
-            nombre_archivo = carta.nombre.lower().replace(' ','_')
-            
-            # 1. Intentar cargar versión .webp optimizada por idioma
-            pix = get_webp_pixmap(carta.id_api, carta.nombre, card_lang, size=size)
+            card_key = f"{carta.id_api}:{card_lang}"
+            nombre_archivo = carta.nombre.lower().replace(' ', '_')
+            needs_download = False
 
-            # 2. Si no se encontró, intentar get_pixmap_from_zip
+            # 1. Intentar cargar versión .webp exacta en el idioma de la carta
+            pix = get_webp_pixmap(carta.id_api, carta.nombre, card_lang, size=size, allow_lang_fallback=False)
+
+            # 2. Si no existe en ese idioma exacto, buscar fallback local y encolar descarga .webp en su idioma
+            if not pix:
+                needs_download = True
+                pix = get_webp_pixmap(carta.id_api, carta.nombre, card_lang, size=size, allow_lang_fallback=True)
             if not pix:
                 pix = get_pixmap_from_zip(nombre_archivo, size=size, id_api=carta.id_api)
-            
-            # 3. Si no se encontró, intentar ruta alternativa
             if not pix:
                 ruta_alt = os.path.join(self.path_imagenes, f"{nombre_archivo}_{carta.id_api}.webp")
                 if os.path.exists(ruta_alt):
                     pix = QPixmap(ruta_alt).scaled(size[0], size[1], Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
-            if not pix:
-                continue
+            # 3. Nunca ocultar la carta: mostrar placeholder limpio mientras se descarga el .webp
+            if not pix or pix.isNull():
+                pix = get_card_placeholder_pixmap(size, carta.nombre)
+                needs_download = True
 
-            print(f"Dimensiones del pixmap: {pix.width()}x{pix.height()}")
-            
             card_widget = CardItemWidget(carta, pix, size)
-            card_key = f"{carta.id_api}:{card_lang}"
             card_widget.image_label.card_key = card_key
             card_widget.image_label.clicked.connect(self.seleccionar_carta)
 
@@ -261,16 +274,42 @@ class GaleriaCartas(QWidget):
                 card_widget.image_label.setStyleSheet("border: none; background-color: transparent;")
 
             self.labels_por_id.setdefault(card_key, []).append(card_widget.image_label)
+            self.card_widgets_por_key.setdefault(card_key, []).append(card_widget)
             self.grid.addWidget(card_widget, row, col)
+
+            if needs_download:
+                self.image_loader.request_image(
+                    card_key,
+                    carta.id_api,
+                    carta.nombre,
+                    idioma=card_lang,
+                    set_id=getattr(carta, "set_id", None),
+                    number=getattr(carta, "number", None),
+                )
+
             col += 1
-            if col == 5: row, col = row + 1, 0
+            if col == 5:
+                row, col = row + 1, 0
 
         total_paginas = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
         self.lbl_pagina.setText(f"{t('Página')} {self.current_page+1} {t('de')} {total_paginas}")
         self.btn_anterior.setEnabled(self.current_page > 0)
         self.btn_siguiente.setEnabled(self.current_page < total_paginas - 1)
 
-        language_manager.language_changed.connect(self.retranslate_ui)
+    def _on_async_image_ready(self, card_key: str, local_path: str):
+        widgets = self.card_widgets_por_key.get(card_key)
+        if not widgets or not os.path.exists(local_path):
+            return
+        pix = QPixmap(local_path)
+        if pix.isNull():
+            return
+        w, h = self._current_card_size
+        scaled = pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        for cw in list(widgets):
+            try:
+                cw.set_card_pixmap(scaled)
+            except RuntimeError:
+                pass
 
     def retranslate_ui(self):
         self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
@@ -400,9 +439,10 @@ class GaleriaCartas(QWidget):
         self.price_thread.start()
 
     def on_precio_progreso(self, actual, total):
-        self.btn_sync_precios.setText(f"🔄 Cargando ({actual}/{total})...")
+        self.btn_sync_precios.setText(f"Cargando ({actual}/{total})...")
 
     def on_precio_finalizado(self, actualizadas):
+        self.session.expire_all()
         self.btn_sync_precios.setEnabled(True)
-        self.btn_sync_precios.setText("🔄 Actualizar Precios")
+        self.btn_sync_precios.setText(t("Actualizar Precios"))
         self.actualizar_galeria()

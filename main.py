@@ -186,11 +186,31 @@ def ensure_db_schema_up_to_date():
                 cur.execute("ALTER TABLE usuario_carta ADD COLUMN variante VARCHAR DEFAULT 'Normal'")
             if "idioma" not in cols:
                 cur.execute("ALTER TABLE usuario_carta ADD COLUMN idioma VARCHAR DEFAULT 'es'")
+            if "categoria" not in cols:
+                cur.execute("ALTER TABLE usuario_carta ADD COLUMN categoria VARCHAR")
             
             cur.execute("PRAGMA table_info(Cartas)")
             cols_cartas = [row[1] for row in cur.fetchall()]
             if "variantes_disponibles" not in cols_cartas:
                 cur.execute("ALTER TABLE Cartas ADD COLUMN variantes_disponibles VARCHAR DEFAULT 'normal,reverse,holo'")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS carta_precios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    carta_id VARCHAR NOT NULL,
+                    fuente VARCHAR NOT NULL,
+                    moneda VARCHAR NOT NULL DEFAULT 'USD',
+                    precio_usd FLOAT NOT NULL DEFAULT 0.0,
+                    precio_original FLOAT NOT NULL DEFAULT 0.0,
+                    precio_low FLOAT,
+                    precio_mid FLOAT,
+                    precio_high FLOAT,
+                    variante VARCHAR DEFAULT 'market',
+                    actualizado_en VARCHAR,
+                    UNIQUE (carta_id, fuente)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_carta_precios_carta_id ON carta_precios (carta_id)")
             
             conn.commit()
             conn.close()

@@ -1,7 +1,8 @@
 import os
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QToolTip
+    QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QToolTip,
+    QDialog, QFrame, QScrollArea
 )
 from PyQt6.QtGui import QPixmap, QCursor, QColor, QPainter, QPainterPath, QTransform, QRadialGradient, QLinearGradient, QPen, QBrush
 from PyQt6.QtCore import (
@@ -10,7 +11,13 @@ from PyQt6.QtCore import (
 )
 from MyQtApp.config import ICONS_DIR, IMAGES_DIR, EXE_DIR, VARIANT_COLOR_MAP, normalize_lang_code
 from MyQtApp.i18n import t, language_manager
-from MyQtApp.app.getImgs import get_pixmap_from_zip, get_webp_pixmap, get_hd_pixmap, HDImageDownloaderThread
+from MyQtApp.app.getImgs import (
+    get_pixmap_from_zip, get_webp_pixmap, get_hd_pixmap,
+    get_card_placeholder_pixmap, HDImageDownloaderThread
+)
+from MyQtApp.app.price_updater import (
+    obtener_precios_carta_bd, SingleCardPriceThread, PRICE_SOURCE_ORDER
+)
 from MyQtApp.session import SessionLocal
 from MyQtApp.models import Cartas
 
@@ -161,6 +168,14 @@ class CardItemWidget(QWidget):
         badge_h = self.lang_badge.height()
         self.lang_badge.move(3, size[1] - badge_h - 3)
         self.lang_badge.raise_()
+
+    def set_card_pixmap(self, pixmap: QPixmap):
+        """Actualiza la imagen de la carta en vivo (usado tras descarga asíncrona .webp)."""
+        if pixmap and not pixmap.isNull():
+            self.image_label.setPixmap(pixmap)
+            self.variant_badge.raise_()
+            self.info_btn.raise_()
+            self.lang_badge.raise_()
 
 
 
@@ -843,6 +858,315 @@ class ClickableLabel(QLabel):
         grupo.start()
 
 
+class CardDetailDialog(QDialog):
+    """Ventana de descripción de carta con comparación de precios en múltiples APIs/mercados."""
+
+    prices_updated = pyqtSignal(dict)
+
+    def __init__(self, carta, parent=None):
+        super().__init__(parent)
+        self.carta = carta
+        self.id_api = getattr(carta, 'id_api', '')
+        self.idioma = getattr(carta, 'idioma', 'es') or 'es'
+        self.nombre = getattr(carta, 'nombre', 'Desconocido')
+        self.set_name = getattr(carta, 'set_name', None) or t("No disponible")
+        self.set_id = getattr(carta, 'set_id', None) or ""
+        self.number = getattr(carta, 'number', None) or t("No disponible")
+        self.price_thread = None
+
+        self.setWindowTitle(f"{self.nombre} - {t('Comparación de Precios')}")
+        self.setMinimumSize(640, 440)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #fff5f7;
+            }
+            QLabel {
+                color: #4a1e2e;
+            }
+            QFrame#CardMetaBox, QFrame#PriceSectionBox {
+                background-color: #ffffff;
+                border: 1.5px solid #f2c4ce;
+                border-radius: 12px;
+            }
+            QFrame#PriceRowCard {
+                background-color: #fff9fa;
+                border: 1px solid #f2d0d8;
+                border-radius: 10px;
+            }
+            QFrame#PriceRowBest {
+                background-color: #f0fdf4;
+                border: 1.5px solid #4ade80;
+                border-radius: 10px;
+            }
+        """)
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(18, 18, 18, 18)
+        main_layout.setSpacing(16)
+
+        # --- Columna Izquierda: Imagen y Descripción de la Carta ---
+        left_box = QFrame()
+        left_box.setObjectName("CardMetaBox")
+        left_box.setFixedWidth(235)
+        left_layout = QVBoxLayout(left_box)
+        left_layout.setContentsMargins(14, 14, 14, 14)
+        left_layout.setSpacing(8)
+
+        img_lbl = QLabel()
+        img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img_lbl.setFixedSize(195, 272)
+        pix = get_hd_pixmap(self.id_api, self.nombre, self.idioma, size=(195, 272))
+        if not pix:
+            pix = get_webp_pixmap(self.id_api, self.nombre, self.idioma, size=(195, 272))
+        if not pix:
+            pix = get_card_placeholder_pixmap((195, 272), self.nombre)
+        img_lbl.setPixmap(pix)
+        left_layout.addWidget(img_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        lbl_title = QLabel(self.nombre)
+        lbl_title.setWordWrap(True)
+        lbl_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #5a2a3a;")
+        left_layout.addWidget(lbl_title)
+
+        set_str = f"{self.set_name} ({self.set_id})" if self.set_id else self.set_name
+        meta_lines = [
+            (t("ID"), self.id_api),
+            (t("Idioma"), self.idioma.upper()),
+            (t("Set / Serie:"), set_str),
+            (t("Número:"), str(self.number)),
+            (t("Tipo"), getattr(carta, 'type', None) or t("No disponible")),
+            (t("Rareza"), getattr(carta, 'rarity', None) or t("No disponible")),
+        ]
+        etapa = getattr(carta, 'stage', None)
+        if etapa and etapa not in ("Ninguno", "N/A"):
+            meta_lines.append((t("Etapa"), etapa))
+
+        for k, v in meta_lines:
+            row_lbl = QLabel(f"<b>{k}:</b> {v}")
+            row_lbl.setWordWrap(True)
+            row_lbl.setStyleSheet("font-size: 11px; color: #6b3b4b;")
+            left_layout.addWidget(row_lbl)
+
+        left_layout.addStretch()
+        main_layout.addWidget(left_box)
+
+        # --- Columna Derecha: Comparación Multi-API ---
+        right_box = QFrame()
+        right_box.setObjectName("PriceSectionBox")
+        right_layout = QVBoxLayout(right_box)
+        right_layout.setContentsMargins(16, 14, 16, 14)
+        right_layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        lbl_p_title = QLabel(t("Comparación de Precios por API"))
+        lbl_p_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #5a2a3a;")
+        header_row.addWidget(lbl_p_title)
+        header_row.addStretch()
+
+        self.lbl_status = QLabel("")
+        self.lbl_status.setStyleSheet("font-size: 11px; color: #8c5464; font-weight: 600;")
+        header_row.addWidget(self.lbl_status)
+        right_layout.addLayout(header_row)
+
+        # Resumen comparativo (Promedio / Rango)
+        self.lbl_summary = QLabel("")
+        self.lbl_summary.setStyleSheet("""
+            background-color: #fff0f3;
+            border: 1px solid #f2c4ce;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #5a2a3a;
+        """)
+        self.lbl_summary.setWordWrap(True)
+        right_layout.addWidget(self.lbl_summary)
+
+        # Contenedor desplazable de tarjetas por fuente API
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.prices_container = QWidget()
+        self.prices_layout = QVBoxLayout(self.prices_container)
+        self.prices_layout.setContentsMargins(0, 0, 0, 0)
+        self.prices_layout.setSpacing(8)
+        self.prices_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        scroll.setWidget(self.prices_container)
+        right_layout.addWidget(scroll, 1)
+
+        # Botones inferiores
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self.btn_refresh = QPushButton(t("Actualizar precios en vivo"))
+        self.btn_refresh.setProperty("class", "pill")
+        self.btn_refresh.setFixedHeight(34)
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh.clicked.connect(self.fetch_live_prices)
+        btn_row.addWidget(self.btn_refresh)
+
+        btn_row.addStretch()
+
+        btn_close = QPushButton(t("Cerrar"))
+        btn_close.setFixedHeight(34)
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f5f9;
+                color: #334155;
+                border: 1px solid #cbd5e1;
+                border-radius: 10px;
+                padding: 4px 16px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #e2e8f0;
+            }
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+
+        right_layout.addLayout(btn_row)
+        main_layout.addWidget(right_box, 1)
+
+        # Cargar precios guardados en BD y disparar actualización si hay < 2 fuentes
+        initial_prices = obtener_precios_carta_bd(self.id_api)
+        self.render_prices(initial_prices)
+        if len(initial_prices) < 2 and self.id_api:
+            self.fetch_live_prices()
+
+    def render_prices(self, prices_map: dict):
+        while self.prices_layout.count():
+            item = self.prices_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        valid_entries = [
+            (src, info)
+            for src in (PRICE_SOURCE_ORDER + [k for k in prices_map.keys() if k not in PRICE_SOURCE_ORDER])
+            if src in prices_map and (prices_map[src].get("precio_usd", 0) > 0 or prices_map[src].get("precio_original", 0) > 0)
+            for info in [prices_map[src]]
+        ]
+
+        if not valid_entries:
+            base_price = getattr(self.carta, 'price', None)
+            if base_price and float(base_price) > 0:
+                self.lbl_summary.setText(f"Precio base registrado en BD: ${float(base_price):.2f} USD")
+            else:
+                self.lbl_summary.setText(t("Sin cotizaciones guardadas aún. Consultando mercados..."))
+            lbl_empty = QLabel(t("Presiona 'Actualizar precios en vivo' para consultar TCGPlayer, Cardmarket, PokemonTCG y TCGCSV."))
+            lbl_empty.setWordWrap(True)
+            lbl_empty.setStyleSheet("font-size: 12px; color: #8c5464; padding: 12px;")
+            self.prices_layout.addWidget(lbl_empty)
+            return
+
+        usd_values = [info["precio_usd"] for _, info in valid_entries if info.get("precio_usd", 0) > 0]
+        min_usd = min(usd_values) if usd_values else 0.0
+        max_usd = max(usd_values) if usd_values else 0.0
+        avg_usd = sum(usd_values) / len(usd_values) if usd_values else 0.0
+
+        if len(usd_values) >= 2:
+            self.lbl_summary.setText(
+                f"Fuentes activas: {len(valid_entries)}  |  Promedio: ${avg_usd:.2f} USD  |  Rango: ${min_usd:.2f} - ${max_usd:.2f} USD"
+            )
+        else:
+            self.lbl_summary.setText(f"Fuente activa: {len(valid_entries)}  |  Valor de mercado: ${avg_usd:.2f} USD")
+
+        for src, info in valid_entries:
+            is_best = len(usd_values) >= 2 and info.get("precio_usd", 0) == min_usd
+            card = QFrame()
+            card.setObjectName("PriceRowBest" if is_best else "PriceRowCard")
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(12, 10, 12, 10)
+            c_layout.setSpacing(4)
+
+            top = QHBoxLayout()
+            lbl_src = QLabel(src)
+            lbl_src.setStyleSheet("font-size: 13px; font-weight: bold; color: #3a1a25;")
+            top.addWidget(lbl_src)
+
+            variante = info.get("variante") or "market"
+            lbl_var = QLabel(variante)
+            lbl_var.setStyleSheet(
+                "font-size: 10px; font-weight: 600; color: #703043; background: #ffe4eb; "
+                "padding: 2px 7px; border-radius: 6px;"
+            )
+            top.addWidget(lbl_var)
+
+            if is_best:
+                lbl_best = QLabel(t("Menor precio"))
+                lbl_best.setStyleSheet(
+                    "font-size: 10px; font-weight: bold; color: #166534; background: #dcfce7; "
+                    "padding: 2px 7px; border-radius: 6px;"
+                )
+                top.addWidget(lbl_best)
+
+            top.addStretch()
+
+            moneda = info.get("moneda", "USD")
+            orig = float(info.get("precio_original") or 0.0)
+            usd = float(info.get("precio_usd") or 0.0)
+            if moneda == "EUR":
+                price_txt = f"€{orig:.2f} EUR  (~${usd:.2f} USD)"
+            else:
+                price_txt = f"${usd:.2f} USD"
+
+            lbl_price = QLabel(price_txt)
+            lbl_price.setStyleSheet("font-size: 14px; font-weight: bold; color: #15803d;")
+            top.addWidget(lbl_price)
+            c_layout.addLayout(top)
+
+            # Detalle de rango Low / Mid / High si está disponible
+            sub_parts = []
+            sym = "€" if moneda == "EUR" else "$"
+            if info.get("low") is not None:
+                sub_parts.append(f"Mín: {sym}{info['low']:.2f}")
+            if info.get("mid") is not None:
+                sub_parts.append(f"Med: {sym}{info['mid']:.2f}")
+            if info.get("high") is not None:
+                sub_parts.append(f"Máx: {sym}{info['high']:.2f}")
+
+            if sub_parts:
+                lbl_sub = QLabel("   |   ".join(sub_parts))
+                lbl_sub.setStyleSheet("font-size: 11px; color: #64748b;")
+                c_layout.addWidget(lbl_sub)
+
+            self.prices_layout.addWidget(card)
+
+    def fetch_live_prices(self):
+        if self.price_thread and self.price_thread.isRunning():
+            return
+        self.btn_refresh.setEnabled(False)
+        self.lbl_status.setText(t("Consultando APIs en vivo..."))
+
+        self.price_thread = SingleCardPriceThread(
+            self.id_api,
+            idioma=self.idioma,
+            card_name=self.nombre,
+            set_name=self.set_name,
+            number=self.number,
+            parent=self,
+        )
+        self.price_thread.prices_loaded.connect(self._on_prices_loaded)
+        self.price_thread.error.connect(self._on_prices_error)
+        self.price_thread.start()
+
+    def _on_prices_loaded(self, returned_id: str, precios: dict):
+        self.btn_refresh.setEnabled(True)
+        if precios:
+            self.lbl_status.setText(f"{len(precios)} APIs actualizadas")
+            merged = obtener_precios_carta_bd(self.id_api)
+            merged.update(precios)
+            self.render_prices(merged)
+            self.prices_updated.emit(merged)
+        else:
+            self.lbl_status.setText(t("Sin precios nuevos en línea"))
+
+    def _on_prices_error(self, err_msg: str):
+        self.btn_refresh.setEnabled(True)
+        self.lbl_status.setText(t("Error de conexión"))
+
+
 class InfoIconLabel(QLabel):
     def __init__(self, carta, parent=None):
         super().__init__(parent)
@@ -879,11 +1203,11 @@ class InfoIconLabel(QLabel):
         self.tooltip_html = self.build_tooltip_html(carta)
         self.setToolTip(self.tooltip_html)
 
-    def build_tooltip_html(self, carta):
+    def build_tooltip_html(self, carta, preloaded_prices: dict = None):
         nombre = getattr(carta, 'nombre', 'Desconocido')
         id_api = getattr(carta, 'id_api', 'N/A')
         price = getattr(carta, 'price', None)
-        precio_fmt = f"${price:.2f}" if (price is not None and price > 0) else t("No disponible")
+        precio_fmt = f"${price:.2f} USD" if (price is not None and price > 0) else t("No disponible")
         tipo = getattr(carta, 'type', None) or t("No disponible")
         set_nombre = getattr(carta, 'set_name', None) or t("No disponible")
         set_id = getattr(carta, 'set_id', None) or ""
@@ -905,8 +1229,40 @@ class InfoIconLabel(QLabel):
         lbl_ent = t("Entrenador")
         lbl_edi = t("Edición")
 
+        # Consultar precios multi-API almacenados en BD
+        multi_prices = preloaded_prices if preloaded_prices is not None else (
+            obtener_precios_carta_bd(id_api) if id_api and id_api != 'N/A' else {}
+        )
+
+        price_rows_html = ""
+        if multi_prices:
+            ordered = [s for s in PRICE_SOURCE_ORDER if s in multi_prices] + [
+                s for s in multi_prices.keys() if s not in PRICE_SOURCE_ORDER
+            ]
+            for src in ordered:
+                p_info = multi_prices[src]
+                moneda = p_info.get("moneda", "USD")
+                usd = float(p_info.get("precio_usd") or 0.0)
+                orig = float(p_info.get("precio_original") or 0.0)
+                if usd <= 0 and orig <= 0:
+                    continue
+                val_str = f"€{orig:.2f} (~${usd:.2f})" if moneda == "EUR" else f"${usd:.2f} USD"
+                price_rows_html += (
+                    f"<tr>"
+                    f"<td style='color: #94a3b8; padding-right: 10px;'><b>{src}:</b></td>"
+                    f"<td style='color: #4ade80; font-size: 12px; font-weight: bold;'>{val_str}</td>"
+                    f"</tr>"
+                )
+        if not price_rows_html:
+            price_rows_html = (
+                f"<tr>"
+                f"<td style='color: #94a3b8; padding-right: 10px; padding-top: 4px;'><b>{lbl_pre}</b></td>"
+                f"<td style='color: #4ade80; font-size: 13px; font-weight: bold; padding-top: 4px;'>{precio_fmt}</td>"
+                f"</tr>"
+            )
+
         html = f"""
-        <div style="font-family: 'Segoe UI', Arial, sans-serif; min-width: 220px; padding: 4px; color: #f8fafc;">
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; min-width: 240px; padding: 4px; color: #f8fafc;">
             <div style="font-size: 14px; font-weight: bold; color: #38bdf8; margin-bottom: 4px; border-bottom: 2px solid #0284c7; padding-bottom: 4px;">
                 {nombre}
             </div>
@@ -937,16 +1293,35 @@ class InfoIconLabel(QLabel):
                 {"<tr><td style='color: #94a3b8; padding-right: 10px;'><b>" + lbl_esp + ":</b></td><td style='color: #f8fafc;'>" + especial + "</td></tr>" if especial not in ("Normal", "N/A", "Ninguno") else ""}
                 {"<tr><td style='color: #94a3b8; padding-right: 10px;'><b>" + lbl_ent + ":</b></td><td style='color: #f8fafc;'>" + entrenador + "</td></tr>" if entrenador not in ("Desconocido", "N/A", "Ninguno") else ""}
                 {"<tr><td style='color: #94a3b8; padding-right: 10px;'><b>" + lbl_edi + ":</b></td><td style='color: #f8fafc;'>" + edicion + "</td></tr>" if edicion not in ("Ninguno", "N/A") else ""}
-                <tr>
-                    <td style="color: #94a3b8; padding-right: 10px; padding-top: 6px;"><b>{lbl_pre}</b></td>
-                    <td style="color: #4ade80; font-size: 13px; font-weight: bold; padding-top: 6px;">{precio_fmt}</td>
-                </tr>
+                <tr><td colspan="2" style="border-top: 1px solid #334155; padding-top: 4px; color: #38bdf8; font-size: 11px; font-weight: bold;">Precios por Mercado / API</td></tr>
+                {price_rows_html}
             </table>
+            <div style="font-size: 10px; color: #94a3b8; margin-top: 6px; border-top: 1px solid #1e293b; padding-top: 4px;">
+                Haz clic para comparar precios en vivo
+            </div>
         </div>
         """
         return html.strip()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            QToolTip.hideText()
+            dlg = CardDetailDialog(self.carta, parent=self.window())
+
+            def on_updated(precios):
+                self.tooltip_html = self.build_tooltip_html(self.carta, preloaded_prices=precios)
+                self.setToolTip(self.tooltip_html)
+
+            dlg.prices_updated.connect(on_updated)
+            dlg.exec()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def enterEvent(self, event):
+        # Refrescar tooltip desde BD por si se actualizaron precios recientemente
+        self.tooltip_html = self.build_tooltip_html(self.carta)
+        self.setToolTip(self.tooltip_html)
         pos = QCursor.pos()
         pos.setX(pos.x() + 12)
         pos.setY(pos.y() + 12)

@@ -10,7 +10,10 @@ import os
 
 from ..session import SessionLocal
 from ..models import Cartas, UsuarioCarta
-from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap
+from ..app.getImgs import (
+    get_pixmap_from_zip, get_webp_pixmap, get_card_placeholder_pixmap,
+    CardImageLoaderManager
+)
 from MyQtApp.ui.CardWidget import ClickableLabel, CardItemWidget, VariantLegendBar
 from MyQtApp.ui.toast import show_toast
 from sqlalchemy import func, and_
@@ -27,9 +30,14 @@ class GaleriaCartasInventario(QWidget):
         self.path_imagenes = path_imagenes
         self.session = SessionLocal()
         self.labels_por_id = {}
+        self.card_widgets_por_key = {}
+        self._current_card_size = (120, 170)
         self.cartas_seleccionadas = set()
         self.current_page = 0
         self.total_cartas = 0
+
+        self.image_loader = CardImageLoaderManager(max_threads=6, parent=self)
+        self.image_loader.image_ready.connect(self._on_async_image_ready)
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(10, 10, 10, 10)
@@ -157,6 +165,7 @@ class GaleriaCartasInventario(QWidget):
         self.actualizar_total_cartas()
         self.actualizar_valor_total()
         self.actualizar_galeria()
+        language_manager.language_changed.connect(self.retranslate_ui)
 
 
     # ✅ SQLAlchemy: cargar combos
@@ -385,6 +394,7 @@ class GaleriaCartasInventario(QWidget):
             size = (150, 212)
         else: # Normal
             size = (120, 170)
+        self._current_card_size = size
 
         q = self.session.query(Cartas, UsuarioCarta.variante).join(
             UsuarioCarta,
@@ -417,6 +427,7 @@ class GaleriaCartasInventario(QWidget):
 
         row, col = 0, 0
         self.labels_por_id.clear()
+        self.card_widgets_por_key.clear()
 
         for carta, variante_db in cartas_tuples:
             nombre = carta.nombre
@@ -424,20 +435,23 @@ class GaleriaCartasInventario(QWidget):
             card_lang = carta.idioma or language_manager.current_language
             card_key = f"{id_api}:{card_lang}"
             nombre_archivo = nombre.lower().replace(" ", "_")
-            
-            # 1. Intentar cargar versión .webp por idioma de la carta
-            pixmap = get_webp_pixmap(id_api, nombre, card_lang, size=size)
+            needs_download = False
+
+            # 1. Intentar cargar versión .webp exacta por idioma de la carta
+            pixmap = get_webp_pixmap(id_api, nombre, card_lang, size=size, allow_lang_fallback=False)
+            if not pixmap:
+                needs_download = True
+                pixmap = get_webp_pixmap(id_api, nombre, card_lang, size=size, allow_lang_fallback=True)
             if not pixmap:
                 pixmap = get_pixmap_from_zip(nombre_archivo, size=size, id_api=id_api)
-            
-            # Si no se encontró con get_pixmap_from_zip, intentar ruta alternativa
             if not pixmap:
                 ruta_alt = os.path.join(self.path_imagenes, f"{nombre_archivo}_{id_api}.webp")
                 if os.path.exists(ruta_alt):
                     pixmap = QPixmap(ruta_alt).scaled(size[0], size[1], Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
 
-            if not pixmap:
-                continue
+            if not pixmap or pixmap.isNull():
+                pixmap = get_card_placeholder_pixmap(size, nombre)
+                needs_download = True
 
             card_widget = CardItemWidget(carta, pixmap, size, variante=variante_db or "Normal")
             card_widget.image_label.card_key = card_key
@@ -450,12 +464,43 @@ class GaleriaCartasInventario(QWidget):
                 card_widget.image_label.setStyleSheet("border: none; background-color: transparent;")
 
             self.labels_por_id.setdefault(card_key, []).append(card_widget.image_label)
+            self.card_widgets_por_key.setdefault(card_key, []).append(card_widget)
             self.grid.addWidget(card_widget, row, col)
+
+            if needs_download:
+                self.image_loader.request_image(
+                    card_key,
+                    id_api,
+                    nombre,
+                    idioma=card_lang,
+                    set_id=getattr(carta, "set_id", None),
+                    number=getattr(carta, "number", None),
+                )
 
             col += 1
             if col == 5:
                 col = 0
                 row += 1
+
+        total_pages = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
+        self.lbl_pagina.setText(f"{t('Página')} {self.current_page + 1} {t('de')} {total_pages}")
+        self.btn_anterior.setEnabled(self.current_page > 0)
+        self.btn_siguiente.setEnabled(self.current_page < total_pages - 1)
+
+    def _on_async_image_ready(self, card_key: str, local_path: str):
+        widgets = self.card_widgets_por_key.get(card_key)
+        if not widgets or not os.path.exists(local_path):
+            return
+        pix = QPixmap(local_path)
+        if pix.isNull():
+            return
+        w, h = self._current_card_size
+        scaled = pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        for cw in list(widgets):
+            try:
+                cw.set_card_pixmap(scaled)
+            except RuntimeError:
+                pass
 
     def cambiar_variante_carta(self, id_api, nueva_variante):
         try:
@@ -470,14 +515,6 @@ class GaleriaCartasInventario(QWidget):
 
         except Exception as e:
             print(f"Error cambiando variante en BD: {e}")
-
-
-        total_pages = max(1, (self.total_cartas + self.CARTAS_POR_PAGINA - 1) // self.CARTAS_POR_PAGINA)
-        self.lbl_pagina.setText(f"{t('Página')} {self.current_page + 1} {t('de')} {total_pages}")
-        self.btn_anterior.setEnabled(self.current_page > 0)
-        self.btn_siguiente.setEnabled(self.current_page < total_pages - 1)
-
-        language_manager.language_changed.connect(self.retranslate_ui)
 
     def retranslate_ui(self):
         self.buscador.setPlaceholderText(t("Buscar carta por nombre..."))
@@ -570,16 +607,16 @@ class GaleriaCartasInventario(QWidget):
     def iniciar_sincronizacion_precios(self):
         from MyQtApp.app.price_updater import PriceUpdaterThread
 
-        cartas_usuario = self.session.query(Cartas.id_api).join(UsuarioCarta).filter(
+        cartas_usuario = self.session.query(UsuarioCarta.carta_id, UsuarioCarta.idioma).filter(
             UsuarioCarta.usuario_nombre == self.nombre_usuario
         ).all()
 
-        id_list = [c[0] for c in cartas_usuario if c[0]]
+        id_list = [(c[0], c[1] or "en") for c in cartas_usuario if c[0]]
         if not id_list:
             return
 
         self.btn_sync_precios.setEnabled(False)
-        self.btn_sync_precios.setText("🔄 Conectando...")
+        self.btn_sync_precios.setText("Conectando...")
 
         self.price_thread = PriceUpdaterThread(id_list, parent=self)
         self.price_thread.progress.connect(self.on_precio_progreso)
@@ -587,18 +624,30 @@ class GaleriaCartasInventario(QWidget):
         self.price_thread.start()
 
     def on_precio_progreso(self, actual, total):
-        self.btn_sync_precios.setText(f"🔄 Cargando ({actual}/{total})...")
+        self.btn_sync_precios.setText(f"Cargando ({actual}/{total})...")
 
     def on_precio_finalizado(self, actualizadas):
+        self.session.expire_all()
         self.btn_sync_precios.setEnabled(True)
-        self.btn_sync_precios.setText("🔄 Precios Real-Time")
+        self.btn_sync_precios.setText(t("Precios Real-Time"))
         self.actualizar_valor_total()
         self.actualizar_galeria()
 
     def actualizar_valor_total(self):
-        res = self.session.query(func.sum(Cartas.price)).join(UsuarioCarta).filter(
-            UsuarioCarta.usuario_nombre == self.nombre_usuario,
-            Cartas.price > 0
-        ).scalar()
+        res = (
+            self.session.query(func.sum(Cartas.price))
+            .join(
+                UsuarioCarta,
+                and_(
+                    Cartas.id_api == UsuarioCarta.carta_id,
+                    func.coalesce(Cartas.idioma, 'es') == func.coalesce(UsuarioCarta.idioma, 'es'),
+                ),
+            )
+            .filter(
+                UsuarioCarta.usuario_nombre == self.nombre_usuario,
+                Cartas.price > 0,
+            )
+            .scalar()
+        )
         total_val = float(res) if res else 0.0
         self.lbl_valor_total.setText(f"{t('Valor Inventario')} ${total_val:,.2f} USD")

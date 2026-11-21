@@ -13,7 +13,12 @@ from sqlalchemy import func
 from MyQtApp.config import ASSETS_DIR, IMAGES_DIR
 from ..session import SessionLocal
 from ..models import Cartas, UsuarioCarta
-from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap
+from ..app.getImgs import get_pixmap_from_zip, get_webp_pixmap, get_card_placeholder_pixmap
+from ..app.price_updater import (
+    obtener_precios_multiples_cartas_bd,
+    PriceUpdaterThread,
+    PRICE_SOURCE_ORDER,
+)
 from MyQtApp.i18n import t, language_manager
 from MyQtApp.ui.CardWidget import CardZoomOverlay, VariantBadgeButton, LanguageBadgeLabel
 from MyQtApp.ui.toast import show_toast
@@ -537,8 +542,10 @@ class InventorySidebar(QWidget):
             ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{id_api}.webp")
             if os.path.exists(ruta_alt):
                 pixmap = QPixmap(ruta_alt)
+        if not pixmap or pixmap.isNull():
+            pixmap = get_card_placeholder_pixmap((100, 140), first_carta.nombre)
 
-        card_lbl = DraggableCardLabel(id_api, nombre_archivo, pixmap or QPixmap())
+        card_lbl = DraggableCardLabel(id_api, nombre_archivo, pixmap)
         card_lbl.idioma = first_lang
 
         state = {
@@ -585,6 +592,8 @@ class InventorySidebar(QWidget):
                 r_alt = os.path.join(IMAGES_DIR, f"{n_arch}_{id_api}.webp")
                 if os.path.exists(r_alt):
                     pix = QPixmap(r_alt)
+            if not pix or pix.isNull():
+                pix = get_card_placeholder_pixmap((100, 140), c_obj.nombre)
 
             if pix and not pix.isNull():
                 card_lbl.setPixmap(pix)
@@ -857,6 +866,40 @@ class BinderView(QWidget):
 
         right_layout.addLayout(header_layout)
 
+        # Barra de Calculador de Precio Acumulativo del Binder por API (Issue #14)
+        self.binder_price_bar = QFrame()
+        self.binder_price_bar.setObjectName("BinderPriceBar")
+        self.binder_price_bar.setStyleSheet("""
+            QFrame#BinderPriceBar {
+                background-color: #ffffff;
+                border: 1.5px solid #f2c4ce;
+                border-radius: 10px;
+            }
+        """)
+        price_bar_layout = QHBoxLayout(self.binder_price_bar)
+        price_bar_layout.setContentsMargins(12, 6, 12, 6)
+        price_bar_layout.setSpacing(10)
+
+        self.lbl_binder_price_title = QLabel(f"{t('Valor del Binder')}:")
+        self.lbl_binder_price_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #5a2a3a; border: none; background: transparent;")
+        price_bar_layout.addWidget(self.lbl_binder_price_title)
+
+        self.binder_prices_pills_container = QWidget()
+        self.binder_prices_pills_container.setStyleSheet("background: transparent; border: none;")
+        self.binder_prices_pills_layout = QHBoxLayout(self.binder_prices_pills_container)
+        self.binder_prices_pills_layout.setContentsMargins(0, 0, 0, 0)
+        self.binder_prices_pills_layout.setSpacing(8)
+        price_bar_layout.addWidget(self.binder_prices_pills_container, 1)
+
+        self.btn_sync_binder_prices = QPushButton(t("Cotizar APIs"))
+        self.btn_sync_binder_prices.setFixedHeight(26)
+        self.btn_sync_binder_prices.setProperty("class", "pill")
+        self.btn_sync_binder_prices.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sync_binder_prices.clicked.connect(self.sincronizar_precios_binder_actual)
+        price_bar_layout.addWidget(self.btn_sync_binder_prices)
+
+        right_layout.addWidget(self.binder_price_bar)
+
         # Spread Stack Container (Stacked Widget to allow transition animations)
         self.spread_stack = QStackedWidget()
         right_layout.addWidget(self.spread_stack, 1) # Expand
@@ -928,7 +971,181 @@ class BinderView(QWidget):
         self.update_folder_combo()
         self.aplicar_estilo_carpeta_actual()
         self.update_spread(direction=0)
+        self.actualizar_resumen_precios_binder()
         self.main_stack.setCurrentWidget(self.binder_pages_widget)
+
+    def _extract_folder_card_entries(self, folder_data: dict) -> list[tuple[str, str]]:
+        """Retorna lista de (id_api, idioma) de todas las cartas colocadas en el modo activo de la carpeta."""
+        if not isinstance(folder_data, dict):
+            return []
+        mode = folder_data.get("mode", "3x3")
+        cards_dict = folder_data.get("cards", {}).get(mode, {})
+        entries = []
+        for slot_val in cards_dict.values():
+            if isinstance(slot_val, dict):
+                cid = slot_val.get("id_api")
+                lang = slot_val.get("idioma", "en")
+                if cid:
+                    entries.append((cid, lang))
+            elif isinstance(slot_val, str) and slot_val:
+                if ":" in slot_val:
+                    cid, lang = slot_val.split(":", 1)
+                    entries.append((cid, lang))
+                else:
+                    entries.append((slot_val, "en"))
+        return entries
+
+    def calcular_precios_carpeta(self, folder_data: dict) -> dict:
+        """
+        Calcula el valor acumulativo total de una carpeta/binder sumando el valor
+        de cada carta dentro de ella, separado por cada fuente API disponible.
+        """
+        entries = self._extract_folder_card_entries(folder_data)
+        card_ids = [cid for cid, _ in entries]
+        if not card_ids:
+            return {
+                "total_cards": 0,
+                "sources": {},
+                "base_total_usd": 0.0,
+                "base_priced_count": 0,
+                "entries": [],
+            }
+
+        multi_prices, base_prices = obtener_precios_multiples_cartas_bd(card_ids)
+
+        totals_by_source = {}
+        base_total_usd = 0.0
+        base_priced_count = 0
+
+        for cid in card_ids:
+            bp = base_prices.get(cid, 0.0)
+            if bp > 0:
+                base_total_usd += bp
+                base_priced_count += 1
+
+            c_sources = multi_prices.get(cid, {})
+            for src, info in c_sources.items():
+                usd = float(info.get("precio_usd") or 0.0)
+                orig = float(info.get("precio_original") or 0.0)
+                if usd <= 0 and orig <= 0:
+                    continue
+                bucket = totals_by_source.setdefault(
+                    src,
+                    {"usd": 0.0, "orig": 0.0, "moneda": info.get("moneda", "USD"), "priced_count": 0},
+                )
+                bucket["usd"] += usd
+                bucket["orig"] += orig
+                bucket["priced_count"] += 1
+
+        for bucket in totals_by_source.values():
+            bucket["usd"] = round(bucket["usd"], 2)
+            bucket["orig"] = round(bucket["orig"], 2)
+
+        return {
+            "total_cards": len(card_ids),
+            "sources": totals_by_source,
+            "base_total_usd": round(base_total_usd, 2),
+            "base_priced_count": base_priced_count,
+            "entries": entries,
+        }
+
+    def actualizar_resumen_precios_binder(self):
+        """Refresca la barra de valor acumulativo por API de la carpeta actualmente abierta."""
+        if not hasattr(self, "binder_prices_pills_layout"):
+            return
+
+        while self.binder_prices_pills_layout.count():
+            item = self.binder_prices_pills_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        folders = self.get_user_folders()
+        folder = folders.get(self.current_folder_id)
+        if not folder:
+            return
+
+        res = self.calcular_precios_carpeta(folder)
+        total_cards = res["total_cards"]
+        sources = res["sources"]
+
+        self.lbl_binder_price_title.setText(f"{t('Valor del Binder')} ({total_cards} cartas):")
+
+        if total_cards == 0:
+            lbl = QLabel("$0.00 USD")
+            lbl.setStyleSheet("font-size: 12px; color: #8c5464; font-weight: 600; border: none; background: transparent;")
+            self.binder_prices_pills_layout.addWidget(lbl)
+            self.binder_prices_pills_layout.addStretch()
+            return
+
+        ordered_sources = [s for s in PRICE_SOURCE_ORDER if s in sources] + [
+            s for s in sources.keys() if s not in PRICE_SOURCE_ORDER
+        ]
+
+        if ordered_sources:
+            palette = {
+                "TCGPlayer": ("#ecfdf5", "#15803d", "#86efac"),
+                "Cardmarket": ("#eff6ff", "#1d4ed8", "#93c5fd"),
+                "PokemonTCG": ("#fef3c7", "#b45309", "#fcd34d"),
+                "TCGCSV": ("#f5f3ff", "#6d28d9", "#c4b5fd"),
+            }
+            for src in ordered_sources:
+                info = sources[src]
+                bg, fg, bd = palette.get(src, ("#f8fafc", "#334155", "#cbd5e1"))
+                if info["moneda"] == "EUR":
+                    txt = f"{src} = €{info['orig']:,.2f} (~${info['usd']:,.2f})"
+                else:
+                    txt = f"{src} = ${info['usd']:,.2f}"
+                pill = QLabel(txt)
+                pill.setToolTip(f"{src}: {info['priced_count']}/{total_cards} cartas cotizadas")
+                pill.setStyleSheet(
+                    f"background-color: {bg}; color: {fg}; border: 1px solid {bd}; "
+                    f"border-radius: 8px; padding: 3px 9px; font-size: 11px; font-weight: bold;"
+                )
+                self.binder_prices_pills_layout.addWidget(pill)
+        else:
+            base_usd = res["base_total_usd"]
+            pill = QLabel(f"Mercado Base = ${base_usd:,.2f} USD")
+            pill.setToolTip(t("Presiona 'Cotizar APIs' para comparar precios entre TCGPlayer, Cardmarket y PokemonTCG"))
+            pill.setStyleSheet(
+                "background-color: #fff0f3; color: #703043; border: 1px solid #f2a7b7; "
+                "border-radius: 8px; padding: 3px 10px; font-size: 11px; font-weight: bold;"
+            )
+            self.binder_prices_pills_layout.addWidget(pill)
+
+        self.binder_prices_pills_layout.addStretch()
+
+    def sincronizar_precios_binder_actual(self):
+        """Consulta múltiples APIs en vivo para todas las cartas de la carpeta abierta."""
+        folders = self.get_user_folders()
+        folder = folders.get(self.current_folder_id)
+        if not folder:
+            return
+        entries = self._extract_folder_card_entries(folder)
+        if not entries:
+            show_toast(t("Esta carpeta no tiene cartas para cotizar"), "info")
+            return
+
+        self.btn_sync_binder_prices.setEnabled(False)
+        self.btn_sync_binder_prices.setText(t("Cotizando..."))
+
+        self.binder_price_thread = PriceUpdaterThread(entries, parent=self)
+        self.binder_price_thread.progress.connect(
+            lambda cur, tot: self.btn_sync_binder_prices.setText(f"{cur}/{tot}...")
+        )
+        self.binder_price_thread.finished.connect(self._on_binder_prices_synced)
+        self.binder_price_thread.error.connect(self._on_binder_prices_error)
+        self.binder_price_thread.start()
+
+    def _on_binder_prices_synced(self, actualizadas: int):
+        self.btn_sync_binder_prices.setEnabled(True)
+        self.btn_sync_binder_prices.setText(t("Cotizar APIs"))
+        self.actualizar_resumen_precios_binder()
+        show_toast(f"Precios del binder actualizados ({actualizadas} cartas)", "info")
+
+    def _on_binder_prices_error(self, err_msg: str):
+        self.btn_sync_binder_prices.setEnabled(True)
+        self.btn_sync_binder_prices.setText(t("Cotizar APIs"))
+        show_toast(f"Error al cotizar carpeta: {err_msg}", "error")
 
     def render_folders_grid(self):
         """Dibuja las tarjetas de carpetas con sus diseños, colores, tamaños y cantidad de cartas."""
@@ -1002,7 +1219,7 @@ class BinderView(QWidget):
         cant_cartas = len(cards_dict)
 
         frame = QFrame()
-        frame.setFixedSize(220, 240)
+        frame.setFixedSize(230, 275)
         frame.setCursor(Qt.CursorShape.PointingHandCursor)
         frame.setStyleSheet(f"""
             QFrame {{
@@ -1071,6 +1288,31 @@ class BinderView(QWidget):
         meta_layout.addWidget(badge_cards)
 
         layout.addLayout(meta_layout)
+
+        # Resumen de precio acumulativo de la carpeta por API
+        price_res = self.calcular_precios_carpeta(f_data)
+        src_map = price_res["sources"]
+        if src_map:
+            parts = []
+            for src in PRICE_SOURCE_ORDER:
+                if src in src_map:
+                    info = src_map[src]
+                    if info["moneda"] == "EUR":
+                        parts.append(f"{src}: €{info['orig']:,.2f}")
+                    else:
+                        parts.append(f"{src}: ${info['usd']:,.2f}")
+            price_summary_txt = " | ".join(parts[:2])
+        else:
+            price_summary_txt = f"Valor: ${price_res['base_total_usd']:,.2f} USD"
+
+        lbl_folder_val = QLabel(price_summary_txt)
+        lbl_folder_val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_folder_val.setWordWrap(True)
+        lbl_folder_val.setStyleSheet(
+            "background: rgba(255,255,255,0.88); border: 1px solid #86efac; "
+            "border-radius: 6px; padding: 3px 6px; font-size: 10px; font-weight: bold; color: #15803d;"
+        )
+        layout.addWidget(lbl_folder_val)
 
         # Botón Abrir Carpeta
         btn_open = QPushButton(f"📂 {t('Abrir Carpeta')}")
@@ -1379,6 +1621,7 @@ class BinderView(QWidget):
             slot.clear_card()
 
         self.update_selection_state()
+        self.actualizar_resumen_precios_binder()
 
     def retranslate_ui(self):
         self.title_lbl.setText(t("Binder"))
@@ -1771,27 +2014,24 @@ class BinderView(QWidget):
                                 ruta_alt = os.path.join(IMAGES_DIR, f"{nombre_archivo}_{card_id}.webp")
                                 if os.path.exists(ruta_alt):
                                     pixmap = QPixmap(ruta_alt)
+                            if not pixmap or pixmap.isNull():
+                                pixmap = get_card_placeholder_pixmap((cfg["card_w"], cfg["card_h"]), nombre)
 
-                            if pixmap:
-                                slot.set_card(card_id, nombre_archivo, pixmap, idioma=c_lang, variante=card_var)
+                            slot.set_card(card_id, nombre_archivo, pixmap, idioma=c_lang, variante=card_var)
         finally:
             session.close()
 
     def update_slot_variant(self, page, slot, nueva_variante):
         target_mode = self.current_mode
-        if self.usuario not in self.binder_data:
-            self.binder_data[self.usuario] = {}
-        if target_mode not in self.binder_data[self.usuario]:
-            self.binder_data[self.usuario][target_mode] = {}
-        
+        cards_dict = self._get_current_cards_dict(target_mode)
         key = f"{page}_{slot}"
-        existing = self.binder_data[self.usuario][target_mode].get(key)
+        existing = cards_dict.get(key)
         
         if isinstance(existing, dict):
             existing["variante"] = nueva_variante
-            self.binder_data[self.usuario][target_mode][key] = existing
+            cards_dict[key] = existing
         elif isinstance(existing, str):
-            self.binder_data[self.usuario][target_mode][key] = {
+            cards_dict[key] = {
                 "id_api": existing,
                 "variante": nueva_variante
             }
@@ -1864,9 +2104,13 @@ class BinderView(QWidget):
                             ruta_alt = os.path.join(IMAGES_DIR, f"{n_archivo}_{card_id}.webp")
                             if os.path.exists(ruta_alt):
                                 pixmap = QPixmap(ruta_alt)
+                        if not pixmap or pixmap.isNull():
+                            pixmap = get_card_placeholder_pixmap((cfg["card_w"], cfg["card_h"]), carta.nombre)
                         slot.set_card(card_id, n_archivo, pixmap, idioma=c_lang, variante=variante)
                 finally:
                     session.close()
+
+        self.actualizar_resumen_precios_binder()
 
 
     def prev_spread(self):
@@ -1880,6 +2124,7 @@ class BinderView(QWidget):
         cards_dict.clear()
         self.save_binder_data()
         self.update_spread(direction=0)
+        self.actualizar_resumen_precios_binder()
         
     def next_spread(self):
         self.current_spread_index += 1

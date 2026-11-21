@@ -90,4 +90,25 @@ class MazoCarta(Base):
     mazo = relationship("Mazo", back_populates="cartas")
 
 
+class CartaPrecio(Base):
+    """Almacena precios comparativos por carta provenientes de múltiples APIs / mercados."""
+    __tablename__ = "carta_precios"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, nullable=False)
+    carta_id = Column(String, nullable=False, index=True)
+    fuente = Column(String, nullable=False)  # Ej: TCGPlayer, Cardmarket, PokemonTCG, TCGCSV
+    moneda = Column(String, default="USD", nullable=False)
+    precio_usd = Column(Float, default=0.0, nullable=False)
+    precio_original = Column(Float, default=0.0, nullable=False)
+    precio_low = Column(Float, nullable=True)
+    precio_mid = Column(Float, nullable=True)
+    precio_high = Column(Float, nullable=True)
+    variante = Column(String, default="market", nullable=True)
+    actualizado_en = Column(String, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint('carta_id', 'fuente', name='uix_carta_precio_fuente'),
+    )
+
+
 # Las tablas se crean desde main.py
